@@ -10,10 +10,59 @@ cdh03   datanode       192.168.165.63          	Cloudera Agen                   
 cdh04   datanode
 
 
-1.初始环境搭建
+
+
+
+一.（所有节点）初始环境搭建
 yum update
+关闭防火墙和 selinux
+systemctl stop firewalld.service
+systemctl disable firewalld.service
+
+vim /etc/selinux/config
+设置SELINUX=disabled
+sed -i "s/SELINUX=enforcing/SELINUX=disabled/g" /etc/selinux/config
+
+
+epel
+yum install -y epel-release.noarch
+
+
+配置NTP服务
+# 安装
+ yum install ntp
+ # 设置开机启动
+ chkconfig ntpd on
+ # 服务启动
+ systemctl start ntpd
+ 
+ # 手动同步时钟的方法
+ ntpdate -u 0.cn.pool.ntp.org
+
 安装 jdk 1.8
+yum install -y java-1.8.0-openjdk.x86_64
+
+
 cloudera manager repo
 修改主机名
+cdh01 192.168.165.88
+cdh02 192.168.165.85
+cdh03 192.168.165.63
+
 主机之间免密码登录
+
+生产密钥:
+ssh-keygen -t rsa
+
+分发密钥:
+ssh-copy-id cdh01
+ssh-copy-id cdh02
+ssh-copy-id cdh03
+
+
+
+二.主节点 安装cm 和 mysql
+1.安装cloudera manager
+
+2.安装MySQL & 安装mysql驱动
 
