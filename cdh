@@ -43,11 +43,11 @@ yum install -y epel-release.noarch
 yum install -y java-1.8.0-openjdk.x86_64
 
 
-cloudera manager repo
 修改主机名
-cdh01 192.168.165.88
-cdh02 192.168.165.85
-cdh03 192.168.165.63
+192.168.165.88 cdh01
+192.168.165.85 cdh02
+192.168.165.63 cdh03
+
 
 主机之间免密码登录
 
@@ -63,6 +63,13 @@ ssh-copy-id cdh03
 
 二.主节点 安装cm 和 mysql
 1.安装cloudera manager
+https://archive.cloudera.com/cm6/6.3.1/redhat7/yum/cloudera-manager.repo
+
+curl -o /etc/yum.repos.d/cloudera-manager.repo https://archive.cloudera.com/cm6/6.3.1/redhat7/yum/cloudera-manager.repo
+yum install -y cloudera-manager-server.x86_64 cloudera-manager-agent.x86_64 cloudera-manager-daemons.x86_64
+
 
 2.安装MySQL & 安装mysql驱动
+
+
 
