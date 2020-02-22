@@ -1,4 +1,19 @@
-cdh01
-cdh02
-cdh03
-cdh04
+目标： 使用Cloudera Manager安装 hadoop hdfs MapReduce ZooKeeper flume kafka hbase hive presto hue spark. 
+nameserver保证 16G以上内存
+datanode 4G以上
+
+主机名    角色            ip                  用途                                   配置
+
+cdh01   nameserver     192.168.165.88         CM、Cloudera Server、mysql          8C/16G/150G
+cdh02   datanode       192.168.165.85        	Cloudera Agen                      8C/16G/150G
+cdh03   datanode       192.168.165.63          	Cloudera Agen                    8C/16G/150G
+cdh04   datanode
+
+
+1.初始环境搭建
+yum update
+安装 jdk 1.8
+cloudera manager repo
+修改主机名
+主机之间免密码登录
+
