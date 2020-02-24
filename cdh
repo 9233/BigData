@@ -71,5 +71,13 @@ yum install -y cloudera-manager-server.x86_64 cloudera-manager-agent.x86_64 clou
 
 2.安装MySQL & 安装mysql驱动
 
+yum install  -y mariadb-server.x86_64 mariadb.x86_64 mariadb-devel.x86_64 mysql-connector-java.noarch
+
+GRANT ALL PRIVILEGES ON *.* TO 'root'@'localhost' IDENTIFIED BY 'Aa123456';
+GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' IDENTIFIED BY 'Aa123456';
+flush privileges;
+
+
+
 
 
