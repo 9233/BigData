@@ -106,4 +106,8 @@ server_host=cdh1
 准备parcels，将CDH相关文件拷贝到主节点/opt/cloudera/parcel-repo/
 
 
+====
+cdh01,cdh02,cdh03
+====
+
 
