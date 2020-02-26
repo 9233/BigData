@@ -86,6 +86,11 @@ CM数据库配置脚本
 
 #主节点启动服务
 systemctl start cloudera-scm-server
+systemctl stop cloudera-scm-server
+systemctl status cloudera-scm-server
+
+tail -f /var/log/cloudera-scm-server/cloudera-scm-server.log
+
 
 #主节点及其他节点安装和启动 Deamons & Agent
 wget http://192.168.164.1/bigdata/cloudera-manager-daemons-6.2.1-1426065.el7.x86_64.rpm
@@ -96,6 +101,11 @@ yum -y install cloudera-manager-agent-6.2.1-1426065.el7.x86_64.rpm
 
 启动Agent
 systemctl start cloudera-scm-agent
+systemctl status cloudera-scm-agent
+systemctl restart cloudera-scm-agent
+
+systemctl status cloudera-scm-daemons
+
 
 4. 配置Agent
 
