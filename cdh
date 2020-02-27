@@ -143,3 +143,11 @@ rm -rf /var/lib/cloudera-scm-agent/cm_guid;service cloudera-scm-agent restart
 
 扩容安装系统　硬盘格式化，　免密码登录．
 
+
+192.168.165.82
+
+192.168.165.90
+
+
+
+
