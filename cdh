@@ -132,5 +132,14 @@ sha1　记得改成　sha　不然识别不到
 rm -rf /var/lib/cloudera-scm-agent/cm_guid;service cloudera-scm-agent restart
 删除ｃｍ数据库　然后重启server
 
+优化与扩容
+监控报警阀值优化
 
+服务依赖关系复杂．
+注意硬件条件带来的故障．
+
+注意　hostnamectl set-hostname cdh01
+注意  java mysql connector版本 5.1.31以上
+
+扩容安装系统　硬盘格式化，　免密码登录．
 
