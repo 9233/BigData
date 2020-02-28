@@ -148,7 +148,6 @@ rm -rf /var/lib/cloudera-scm-agent/cm_guid;service cloudera-scm-agent restart
 实体机
 192.168.162.140　　
 对应虚拟机：
-
 192.168.163.76　　８Ｇ  500G
 
 
@@ -159,7 +158,6 @@ rm -rf /var/lib/cloudera-scm-agent/cm_guid;service cloudera-scm-agent restart
 实体机
 192.168.165.79
 对应虚拟机
-实体机
 192.168.165.105
 
 
