@@ -1,3 +1,144 @@
 flume  kafka  hdfs hive spark
 
 1.flume
+flume　agent是一个jvm进程，
+
+核心：　　传送数据：　监控目录或者端口　发送到　hdfs或者kafka
+
+拦截器功能，配置　过滤数据．
+
+
+source  channel  sink
+
+Exec Source
+Example for agent named a1:
+
+a1.sources = r1
+a1.channels = c1
+a1.sources.r1.type = exec
+a1.sources.r1.command = tail -F /var/log/secure
+a1.sources.r1.channels = c1
+
+a1.sources.tailsource-1.type = exec
+a1.sources.tailsource-1.shell = /bin/bash -c
+a1.sources.tailsource-1.command = for i in /path/*.txt; do cat $i; done
+
+
+Spooling Directory Source
+Example for an agent named agent-1:
+
+a1.channels = ch-1
+a1.sources = src-1
+
+a1.sources.src-1.type = spooldir
+a1.sources.src-1.channels = ch-1
+a1.sources.src-1.spoolDir = /var/log/apache/flumeSpool
+a1.sources.src-1.fileHeader = true
+
+
+
+1.1Taildir Source　监控目录多目录，多文件
+
+Example for agent named a1:
+
+a1.sources = r1
+a1.channels = c1
+a1.sources.r1.type = TAILDIR
+a1.sources.r1.channels = c1
+a1.sources.r1.positionFile = /var/log/flume/taildir_position.json
+a1.sources.r1.filegroups = f1 f2
+a1.sources.r1.filegroups.f1 = /var/log/test1/example.log
+a1.sources.r1.headers.f1.headerKey1 = value1
+a1.sources.r1.filegroups.f2 = /var/log/test2/.*log.*
+a1.sources.r1.headers.f2.headerKey1 = value2
+a1.sources.r1.headers.f2.headerKey2 = value2-2
+a1.sources.r1.fileHeader = true
+a1.sources.ri.maxBatchCount = 1000
+
+Kafka Source
+Example for topic subscription by comma-separated topic list.
+
+tier1.sources.source1.type = org.apache.flume.source.kafka.KafkaSource
+tier1.sources.source1.channels = channel1
+tier1.sources.source1.batchSize = 5000
+tier1.sources.source1.batchDurationMillis = 2000
+tier1.sources.source1.kafka.bootstrap.servers = localhost:9092
+tier1.sources.source1.kafka.topics = test1, test2
+tier1.sources.source1.kafka.consumer.group.id = custom.g.id
+Example for topic subscription by regex
+
+tier1.sources.source1.type = org.apache.flume.source.kafka.KafkaSource
+tier1.sources.source1.channels = channel1
+tier1.sources.source1.kafka.bootstrap.servers = localhost:9092
+tier1.sources.source1.kafka.topics.regex = ^topic[0-9]$
+# the default kafka.consumer.group.id=flume is used
+
+发送地址：
+Flume Sinks
+
+HDFS Sink
+Example for agent named a1:
+
+a1.channels = c1
+a1.sinks = k1
+a1.sinks.k1.type = hdfs
+a1.sinks.k1.channel = c1
+a1.sinks.k1.hdfs.path = /flume/events/%y-%m-%d/%H%M/%S
+a1.sinks.k1.hdfs.filePrefix = events-
+a1.sinks.k1.hdfs.round = true
+a1.sinks.k1.hdfs.roundValue = 10
+a1.sinks.k1.hdfs.roundUnit = minute
+
+
+The above configuration will round down the timestamp to the last 10th minute. For example, an event 
+with timestamp 11:54:34 AM, June 12, 2012 will cause the hdfs path to become /flume/events/2012-06-12/1150/00.
+
+Kafka Sink
+Hive Sink
+HBase Sink
+File Sink
+
+Flume Channels
+Channels are the repositories where the events are staged on a agent. Source adds the events and Sink removes it.
+
+例子
+下载flume bin文件
+bin/flume-ng agent --conf conf --conf-file conf/log.conf --name a1 -Dflume.root.logger=INFO,console
+bin/flume-ng agent -c conf -f conf/log.conf -n a1 -Dflume.root.logger=INFO,console
+
+# example.conf: A single-node Flume configuration
+
+# Name the components on this agent
+a1.sources = r1
+a1.sinks = k1
+a1.channels = c1
+
+# Describe/configure the source
+a1.sources.r1.type = netcat
+a1.sources.r1.bind = localhost
+a1.sources.r1.port = 44444
+
+# Describe the sink
+a1.sinks.k1.type = logger
+
+# Use a channel which buffers events in memory
+a1.channels.c1.type = memory
+a1.channels.c1.capacity = 1000
+a1.channels.c1.transactionCapacity = 100
+
+# Bind the source and sink to the channel
+a1.sources.r1.channels = c1
+a1.sinks.k1.channel = c1
+
+
+$ nc localhost 44444
+Trying 127.0.0.1...
+Connected to localhost.localdomain (127.0.0.1).
+Escape character is '^]'.
+Hello world! <ENTER>
+OK
+
+2020-03-05 20:47:40,831 (SinkRunner-PollingRunner-DefaultSinkProcessor) 
+[INFO - org.apache.flume.sink.LoggerSink.process(LoggerSink.java:95)] 
+Event: { headers:{} body: 68 65 6C 6C 6F                                  hello }
+
