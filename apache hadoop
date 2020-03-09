@@ -142,3 +142,59 @@ OK
 [INFO - org.apache.flume.sink.LoggerSink.process(LoggerSink.java:95)] 
 Event: { headers:{} body: 68 65 6C 6C 6F                                  hello }
 
+案例
+监控本地log文件变化　上传至hdfs
+
+1.
+a1.sinks.k1.type = hdfs
+a1.sinks.k1.hdfs.path = /tmp/log/
+
+
+hdfs dfs -put localfile hdfsfile
+hdfs dfs -ls /
+hdfs文件有sticky bit机制，只有拥有者才能删除．
+
+案例
+监控本地目录有新文件就上传
+a1.sources.src-1.type = spooldir
+a1.sources.src-1.channels = ch-1
+a1.sources.src-1.spoolDir = /var/log/apache/flumeSpool
+
+
+监控本地多个目录多个文件　上传到hdfs
+!!Taildir Source + file channel + ganglia监控　保证不丢数据
+flume单点故障
+保证数据不丢　　
+1、断点续传
+
+注意 ： flume1.7之后有，1.7之前就需要自己写jar包上传上去使用
+
+#source的配置
+# source类型
+a1.sources.r1.type = TAILDIR
+# 如果flume故障，这个文件用来记录断点位置   这个文件是  自己生成的，不用提前建好，要不会报错
+a1.sources.r1.positionFile = /home/hadoop/data/bd/taildir_position.json
+# 监控的目录
+a1.sources.r1.filegroups = f1
+a1.sources.r1.filegroups.f1=/home/hadoop/data/bd/.*log
+a1.sources.r1.fileHeader = true
+
+
+    Flume使用两个独立的事务分别负责从soucrce到channel，以及从channel到sink的事件传递。
+
+put事物　　put list
+take事物　 take list
+比如：spooling directory source 为文件的每一行创建一个事件，一旦事务中所有的事件全部传递到channel且提交成功，
+那么source就将该文件标记为完成。同理，事务以类似的方式处理从channel到sink的传递过程，如果因为某种原因使得事件无法记录，
+那么事务将会回滚。且所有的事件都会保持到channel中，等待重新传递。
+
+https://www.cnblogs.com/zhqin/p/12231632.html
+
+
+一般生产过程中，都是使用 TailDir source 和 HDFS sink，所以数据会重复但是不会丢失。
+channel配置说明
+
+    MemoryChannel可以实现高速的吞吐， 但是无法保证数据完整性。
+    MemoryRecoverChannel在官方文档的建议上已经建义使用FileChannel来替换。FileChannel保证数据的完整性与一致性。
+    在具体配置不现的FileChannel时，建议FileChannel设置的目录和程序日志文件保存的目录设成不同的磁盘，以便提高效率。
+
