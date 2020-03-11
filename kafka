@@ -1,6 +1,21 @@
+参考文章
+https://www.cnblogs.com/zhqin/p/11992682.html
+
 消息队列
 
-作为缓冲区，应对流量洪峰
+作为缓冲区，应对流量洪峰 统一日志接口
+
+producer
+
+broker : topic
+
+TopicA-partion0-3 三个副本三个机器各一个，　follower 向 leader同步数据
+
+offset　文件偏移量
+
+customer
+
+
 
 
 bin/kafka-server-start.sh -daemon config/server.properties
@@ -15,12 +30,13 @@ bin/kafka-topics.sh cdh101:2181 --delete --topic first
 
 bin/kafka-console-producer.sh --broker-list cdh101:9092 --topic first
 
-bin/kafka-console-consumer.sh --zookeeper cdh101:2181 --topic first
+
 
 bin/kafka-topics.sh --zookeeper cdh101:2181 --describe --topic first
 
 bin/kafka-console-consumer.sh --bootstrap-server cdh101:9092 --topic first
 
 bin/kafka-console-consumer.sh --bootstrap-server cdh101:9092 --from-beginning --topic first
+
 
 
