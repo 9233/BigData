@@ -23,3 +23,29 @@
 3.2 埋点数据：　额外的不影响业务的数据 比如浏览　点击　评论　点赞　停留　收藏等
 
 Flume = > Kafka => Flume => HDFS =>hive, spark,presto,mysql
+
+4.框架版本选择
+
+4.1 hadoop稳定版
+hadoop 2.7.2
+flume 1.7.0
+kafka 0.11
+hive 1.2.1
+zookeeper 3.4
+mysql 5.6
+java 1.8
+presto 0.189
+
+4.2 CDH 5.12 稳定版
+hadoop 2.6.0
+spark 默认1.6 升级到2.4
+flume 1.6.0
+hive 1.1.0
+sqoop 1.4.6
+zookeeper 3.4.5
+
+
+
+
+
+
