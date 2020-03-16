@@ -1,0 +1,25 @@
+1.
+从日志采集到报表显示
+
+数据　采集　清洗　分类　统计等
+
+
+
+2.技术选型
+
+采集 Flume Kafka
+
+存贮　Mysql HDFS Hbase Redis Mongdb
+
+计算：　hive spark flink
+
+查询 presto impala
+
+
+３.数据流程设计
+
+3.1 业务数据： mysql　
+
+3.2 埋点数据：　额外的不影响业务的数据 比如浏览　点击　评论　点赞　停留　收藏等
+
+Flume = > Kafka => Flume => HDFS =>hive, spark,presto,mysql
