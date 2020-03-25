@@ -1,1 +1,20 @@
-1.
+ip
+
+192.168.64.240 cdh101
+192.168.64.241 cdh102
+192.168.64.242 cdh103
+
+cdh101,cdh102,cdh103
+
+
+
+启动脚本
+通过/opt/cm-5.12.1/etc/init.d/cloudera-scm-server start启动服务端。
+通过/opt/cm-5.12.1/etc/init.d/cloudera-scm-agent start启动Agent服务。
+
+
+
+cloudera-scm-agent failed to restart, saying agent dead but pid file exist.
+
+delete pi file
+rm -f /var/run/cloudera-scm-agent.pid
