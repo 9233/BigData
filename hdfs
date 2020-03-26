@@ -1,0 +1,60 @@
+hdfs namenode HA
+https://blog.51cto.com/12445535/2351355?source=dra
+hadoop-ha 严格来说应该分成各个组件的HA 机制
+HA技术要点 ：
+元数据管理 
+2个namenode的状态管理 
+如何防止脑裂
+
+Edits 日志只能有一份，只有Active 状态的namenode 节点可以做写操作
+两个namenode 都可以读取edits
+共享的edits 放在一个共享存储中管理（qjournal 和NFS 两个主流实现）
+1、客户端访问active namenode //双namenode中的fsimages一开始初始化的时候，都是完全一样，都是空的
+2、写数据的时候，写入数据写到active namenode中内存元数据的时候，也会实时的更新到qjonal集群edits日志文件系统中
+3、standay 会没隔一段时间去读取edits文件，并更新到自己的元数据内存中，保持和active最小差异
+4、每隔一段时间，standay中的fsimage会和edits更新一次，保持在本地
+备注：edits既不属于active也不属于standay 依靠第三方qjonal集群 完全独立
+假设 active namenode 宕机了，此时 standay 和active有点差异，但是差异很小，standay迅速从edits日志系统中更新最新一次老的active的操作，完全和老active一样的元数据，那么就要可以迅速的对外来提供服务。
+
+B、需要一个状态管理功能模块
+实现了一个zkfailover，常驻在每一个namenode 所在的节点
+每一个zkfailover 负责监控自己所在的namenode 节点，利用zk 进行状态标识
+当需要进行状态切换时，由zkfailover 来负责切换
+切换时需要防止brain split 现象的发生
+1、active上的zkfc实时监控自己namenode的状态健康信息
+2、如果发生了异常之后会控制standay的zkfc
+3、standay的zkfc收到异常之后会去kill -9 active namenode
+4、如果standay的zkfc没有成功得到kill -9 之后的返回值的话，那么就启动脚本去杀死active namenode 脚本位置为/bin/true
+5、杀死active namenode之后，就成功得到访问值
+6、standay的zkfc通知standay namenode称为active 对外服务。
+
+什么是zkfc：就是基于zookeeper实现的失败切换控制器
+
+如何在状态切换时避免brain split(脑裂)？
+
+  脑裂：active namenode工作不正常后，zkfc在zookeeper中写入一些数据，表明异常，这时standby namenode中的zkfc读到异常信息，并将standby节点置为active。但是，如果之前的active namenode并没有真的死掉，出现了假死（死了一会儿后又正常了），这样，就有两台namenode同时工作了。这种现象称为脑裂。
+
+ 解决方案：standby namenode感知到主用节点出现异常后并不会立即切换状态，zkfc会首先通过ssh远程杀死active节点的 namenode进程（kill -9 进程号）。如果在一段时间内standby的namenode节点没有收到kill执行成功的回执，standby节点会执行一个自定义脚本，尽量保证不会出现脑裂问题！这个机制在hadoop中称为fencing（包括ssh发送kill指令，执行自定义脚本两道保障）。
+从解决方案中可知；当发生active节点崩坏时；hadoop会进行以下两个操作：
+
+1）通过ssh kill掉active节点的namenode进程
+
+2）执行自定义脚本
+原文：https://blog.csdn.net/qq_22310551/article/details/85700978
+
+如何没有及时得到kill的成功返回信息，在调用一个用户指定的shell脚本程序。
+[root@hadoop-node01 bin]# ls -l /bin/true //脚本位置在bin下面
+-rwxr-xr-x. 1 root root 21112 10月 15 2014 /bin/true
+
+在cdh中这个程序在
+HDFS High Availability 防御方法
+dfs.ha.fencing.methods
+用于服务防御的防御方法列表。shell(./cloudera_manager_agent_fencer.py) 是一种设计为使用 Cloudera Manager Agent 的防御机制。sshfence 方法使用 SSH。如果使用自定义防御程序(可能与共享存储、电源装置或网络交换机通信)，则使用 shell 调用它们。
+Cloudera Manager 防御策略的超时时限
+dfs.ha.fencing.cloudera_manager.timeout_millis 10000
+基于 Cloudera Manager 代理的防御程序使用的超时时限（毫秒）
+
+zookeeper在HA机制中的作用
+1、QJN集群需要zk实现协调服务
+2、namenode中谁是active谁是standay记录在zk中
+3、zkfc基于zookeeper实现失败切换控制器
