@@ -7,6 +7,10 @@ flume　agent是一个jvm进程，
 
 拦截器功能，配置　过滤数据．
 
+spooldir　适合不同文件新增，传输完成　添加.complated后缀
+
+taildir 适合单个文件实时更新，比如ｌｏｇ实时
+
 
 source  channel  sink
 
@@ -283,3 +287,7 @@ cat /home/hadoop/data/bd/2.log >> /home/hadoop/data/bd/bd2.log
 
 6、5分钟后查看HDFS的webui
 文件夹目录
+
+
+https://blog.csdn.net/weixin_38750084/article/details/82861555
+
