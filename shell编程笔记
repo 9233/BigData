@@ -126,10 +126,6 @@ notok
 第7章 流程控制（重点）
 7.1 if 判断
 1．基本语法
-if [ 条件判断式 ];then 
-  程序 
-fi 
-或者 
 if [ 条件判断式 ] 
   then 
     程序 
@@ -297,7 +293,8 @@ awk -F ' ' '{sum=sum+$2} END {print sum}' sum.txt
 
  #!/bin/bash
 
-if [ -f file.txt ]; then
+if [ -f file.txt ]
+then
    echo "文件存在!"
 else
    echo "文件不存在!"
