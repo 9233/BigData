@@ -1,0 +1,23 @@
+
+先下载安装包 redis-4.0.8.tar.gz 并做以下操作
+
+tar zxf redis-4.0.8.tar.gz  ##解压安装包
+cd redis-4.0.8
+yum install gcc -y   
+make && make install  ###安装
+cd redis-4.0.8/utils/
+./install_server.sh   执行这个脚本
+2）编辑配置文件
+
+vim /etc/redis/6379.conf 
+找到第70行的bind  后面写0.0.0.0
+/etc/init.d/redis_6379 stop
+
+主库开启AOF
+从库指定 master IP
+
+set a 123
+get a
+
+
+https://www.jianshu.com/p/f0e042b95249
