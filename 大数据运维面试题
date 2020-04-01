@@ -144,6 +144,15 @@ cat access.log |awk -F '/' '{print $3}'|sort|uniq -c
 
 
 4.Python
+
+常用模块
+os  time math random re 
+urllib 
+threading
+pymysql
+
+
+
 列表去重
 list1 = [2, 3, 8, 4, 9, 5, 6, 5, 6, 10, 17, 11, 2]
 
@@ -173,3 +182,7 @@ Python引用了一个内存池(memory pool)机制，即Pymalloc机制(malloc:n.�
 　　当 创建大量消耗小内存的对象时，频繁调用new/malloc会导致大量的内存碎片，致使效率降低。内存池的概念就是预先在内存中申请一定数量的，
   大小相等 的内存块留作备用，当有新的内存需求时，就先从内存池中分配内存给这个需求，不够了之后再申请新的内存。这样做最显著的优势就是能够减少内存碎片，
   提升效率。
+  
+ python函数中的参数*args和**kwargs的含义和用法
+首先，解释星号的作用，一个星号*的作用是将tuple或者list中的元素进行unpack，分开传入，作为多个参数；两个星号**的作用是把dict类型的数据作为参数传入。
+
