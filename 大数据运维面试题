@@ -29,11 +29,12 @@ mysql库主从读写分离。
 
 Redis与memcached相比　有哪些优势?
 Redis 支持５种数据类型：　String , List , Set , SortSet ,Hash
-Redis 支持数据持久化: RDD 和ＡOF　当内存数据达到一定阀值，flush到硬盘．
+Redis 支持数据持久化: RDB 和ＡOF　当内存数据达到一定阀值，flush到硬盘．
 
-RDB是Redis默认的持久化方式。按照一定的时间周期策略把内存的数据以快照的形式保存到硬盘的二进制文件。即Snapshot快照存储，对应产生的数据文件为dump.rdb，通过配置文件中的save参数来定义快照的周期。（ 快照可以是其所表示的数据的一个副本，也可以是数据的一个复制品。）
-AOF：Redis会将每一个收到的写命令都通过Write函数追加到文件最后，类似于MySQL的binlog。当Redis重启是会通过重新执行文件中保存的写命令来在内存中重建整个数据库的内容。
-当两种方式同时开启时，数据恢复Redis会优先选择AOF恢复。
+RDB是Redis默认的持久化方式。按照一定的时间周期策略把内存的数据以快照的形式保存到硬盘的二进制文件。即Snapshot快照存储，对应产生的数据文件为
+dump.rdb，通过配置文件中的save参数来定义快照的周期。（ 快照可以是其所表示的数据的一个副本，也可以是数据的一个复制品。）
+AOF：Redis会将每一个收到的写命令都通过Write函数追加到文件最后，类似于MySQL的binlog。当Redis重启是会通过重新执行文件中保存的写命令来在内存中
+重建整个数据库的内容。当两种方式同时开启时，数据恢复Redis会优先选择AOF恢复。
 
 缓存雪崩我们可以简单的理解为：由于原有缓存失效，新缓存未到期间
 (例如：我们设置缓存时采用了相同的过期时间，在同一时刻出现大面积的缓存过期)，所有原本应该访问缓存的请求都去查询数据库了，
@@ -282,6 +283,46 @@ HadoopHA机制，归纳起来主要是两块：元数据同步和主备选举。
 服务器3启动，给自己投票，同时与之前启动的服务器1,2交换信息，由于服务器3的编号最大所以服务器3胜出，此时投票数正好大于半数，所以服务器3成为领导者，服务器1,2成为小弟。
 服务器4启动，给自己投票，同时与之前启动的服务器1,2,3交换信息，尽管服务器4的编号大，但之前服务器3已经胜出，所以服务器4只能成为小弟。
 服务器5启动，后面的逻辑同服务器4成为小弟。
+
+
+Flume + Kafka + HDFS + Hive 
+
+Flume
+Flume使用两个独立的事务分别负责从soucrce到channel，以及从channel到sink的事件传递。
+
+put事物　　put list
+take事物　 take list
+比如：spooling directory source 为文件的每一行创建一个事件，一旦事务中所有的事件全部传递到channel且提交成功，
+那么source就将该文件标记为完成。同理，事务以类似的方式处理从channel到sink的传递过程，如果因为某种原因使得事件无法记录，
+那么事务将会回滚。且所有的事件都会保持到channel中，等待重新传递。
+
+
+source 
+flume中有三种可监控文件或目录的source，分别问exec、spooldir、taildir
+exec：可通过tail -f命令去tail住一个文件，然后实时同步日志到sink
+spooldir：可监听一个目录，同步目录中的新文件到sink,被同步完的文件可被立即删除或被打上标记 添加.complated后缀 。适合用于同步新文件，
+但不适合对实时追加日志的文件进行监听并同步。
+taildir：可实时监控一批文件，适合单个log的实时追加更新，并记录每个文件最新消费位置，agent进程重启后不会有重复消费的问题。
+
+
+
+channel
+    MemoryChannel可以实现高速的吞吐， 但是无法保证数据完整性。
+    MemoryRecoverChannel在官方文档的建议上已经建义使用FileChannel来替换。FileChannel保证数据的完整性与一致性。
+    在具体配置不现的FileChannel时，建议FileChannel设置的目录和程序日志文件保存的目录设成不同的磁盘，以便提高效率。
+
+sink
+控制文件大小　避免产生较多小文件
+a1.sinks.k1.hdfs.rollSize =67108864
+a1.sinks.k1.hdfs.rollCount = 0
+a1.sinks.k1.hdfs.rollInterval = 60
+a1.sinks.k1.hdfs.round = true
+a1.sinks.k1.hdfs.roundValue = 5
+a1.sinks.k1.hdfs.roundUnit = minute
+
+==========
+Kafka
+
 
 
 
