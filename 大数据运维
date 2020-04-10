@@ -328,6 +328,37 @@ Kafka
 ==========
 Hbase
 
+==========
+
+架构选型
+
+log -> flume -> kafka > hdfs > spark
+
+手机客户端产生Log ，　发送至日志服务器，　由flume进行采集， sink到kafka 　然后再到flume sink 到 hdfs
+
+通过spark　 hive　导入到 mysql
+
+最后　 spring mvc mybatis echarts　mysql数据展示
+
+spark Sql　echarts　图形化显示
+
+
+
+离线批处理　 hive
+实时流处理   spark
+
+比如我过来一批样机 50台
+
+需要测试各个性能．　１０００条ｃａｓｅ；
+
+挂机跑　４个小时
+
+
+
+
+chd 5.7 　和 cdh 5.12.1
+
+
 
 
 
