@@ -291,3 +291,58 @@ cat /home/hadoop/data/bd/2.log >> /home/hadoop/data/bd/bd2.log
 
 https://blog.csdn.net/weixin_38750084/article/details/82861555
 
+实例分析：
+１．　手机网站日志到ｈｄｆｓ
+========
+#agent_name
+a1.sources=r1
+a1.sinks=k1
+a1.channels=c1
+
+#source的配置
+# source类型
+a1.sources.r1.type = TAILDIR
+# 元数据位置
+a1.sources.r1.positionFile = /data/taildir_position.json
+# 监控的目录
+a1.sources.r1.filegroups = f1
+a1.sources.r1.filegroups.f1=/var/log/httpd/access_log
+a1.sources.r1.fileHeader = true
+a1.sources.r1.interceptors = i1
+a1.sources.r1.interceptors.i1.type = timestamp
+
+#sink的配置
+a1.sinks.k1.type = hdfs
+a1.sinks.k1.hdfs.path = hdfs://cdh103/flume/Taildir/
+a1.sinks.k1.hdfs.useLocalTimeStamp = true
+a1.sinks.k1.hdfs.filePrefix = val
+a1.sinks.k1.hdfs.fileSuffix = .log
+a1.sinks.k1.hdfs.rollSize = 0
+a1.sinks.k1.hdfs.rollCount = 0
+a1.sinks.k1.hdfs.minBlockReplicas = 1
+a1.sinks.k1.hdfs.writeFormat = Text
+a1.sinks.k1.hdfs.fileType=DataStream
+
+#channel的配置
+a1.channels.c1.type = file
+a1.channels.c1.checkpointDir = /data/checkpoint
+a1.channels.c1.dataDirs = /data/flumechanneldir
+a1.channels.c1.capacity = 10000000
+a1.channels.c1.transactionCapacity = 5000
+
+#用channel链接source和sink
+a1.sources.r1.channels = c1
+a1.sinks.k1.channel =c1
+
+===========
+
+2.收集网站日志到 kafka
+===============
+
+================
+
+
+
+
+
+
