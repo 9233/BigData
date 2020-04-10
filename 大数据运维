@@ -238,6 +238,7 @@ namenode中的元数据是存储在哪里的？首先，我们做个假设，如
 
 HA　
 HadoopHA机制，归纳起来主要是两块：元数据同步和主备选举。
+QJM全称是Quorum Journal Manager, 由JournalNode（JN）组成，一般是奇数点结点组成。
 元数据同步依赖于QJM共享存储　edit log， 主备选举依赖于ZKFC和Zookeeper。
 
 
