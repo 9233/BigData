@@ -1,2 +1,7 @@
-1.爱奇艺实时统计分析系统
+1.iqiyi实时统计分析系统
 
+log flume kafka spark streaming hbase java web echarts
+
+
+kafka         :    0.10
+spark steaming:   2.1.1
