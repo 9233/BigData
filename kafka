@@ -140,28 +140,109 @@ offset　文件偏移量
 
 customer
 
+===CentOS 7 Kafka=========
+
+wget http://mirrors.hust.edu.cn/apache/zookeeper/zookeeper-3.4.13/zookeeper-3.4.13.tar.gz
+tar zxvf zookeeper-3.4.13.tar.gz
+mv zookeeper-3.4.13 /usr/local/zookeeper
 
 
 
-bin/kafka-server-start.sh -daemon config/server.properties
+cd /usr/local/zookeeper/conf
+cp zoo_sample.cfg zoo.cfg
+vim /usr/local/zookeeper/conf/zoo.cfg 
+
+tickTime=2000
+initLimit=10
+syncLimit=5
+
+#data,logs的路径，根据个人的情况不同设置
+dataDir=/data/zookeeper/data
+dataLogDir=/data/zookeeper/logs
+clientPort=2181
+
+server.1=192.168.0.50:2888:3888
+server.2=192.168.0.60:2888:3888
+server.3=192.168.0.70:2888:3888
+
+# 其中2888是zookeeper服务之间通信的端口
+# 3888是zookeeper与其他应用程序通信端口
+
+在数据盘新建data，logs目录（目录位置根据个人），并在data目录下新建名为myid的文件，文件内容为1，群集中每台机器的myid文件内容不能重复，并和配置文件里的server相对应。1-255即可。
 
 
-bin/kafka-topics.sh --zookeeper cdh101:2181 --create --replication-factor 3 --partitions 1 --topic first
-bin/kafka-topics.sh --zookeeper cdh101:2181 --list
+mkdir -p /data/zookeeper/{data,logs} 
+echo "1" > /data/zookeeper/data/myid    #这里的 1 对应配置文件 server 后面的数字 
+
+启动停止操作：
+/usr/local/zookeeper/bin/zkServer.sh start
+/usr/local/zookeeper/bin/zkServer.sh status
 
 
 
-bin/kafka-topics.sh cdh101:2181 --delete --topic first
+安装配置 kafka 集群
 
-bin/kafka-console-producer.sh --broker-list cdh101:9092 --topic first
+Kafka是由Apache软件基金会开发的一个开源流处理平台，由Scala和Java编写。Kafka是一种高吞吐量的分布式发布订阅消息系统，它可以处理消费者规模的网站中的所有动作流数据。
+
+wget http://mirror.bit.edu.cn/apache/kafka/2.0.0/kafka_2.11-2.0.0.tgz
+tar xvf kafka_2.11-2.0.0.tgz
+mv kafka_2.11-2.0.0 /usr/local/kafka
+
+创建日志目录
+
+mkdir /data/kafka-logs
+
+修改配置文件/usr/local/kafka/config/server.properties
+
+
+broker.id=0                                                # 默认为0，群集按实例排序1、2、3
+listeners=PLAINTEXT://192.168.0.50:9092                    # 本机地址
+advertised.host.name=192.168.0.50                          # 本机地址
+advertised.listeners=PLAINTEXT://192.168.0.50:9092         # 本机地址
+num.network.threads=3
+num.io.threads=8
+socket.send.buffer.bytes=102400
+socket.receive.buffer.bytes=102400
+socket.request.max.bytes=104857600
+log.dirs=/data/kafka-logs                                  #自定义日志地址
+num.partitions=1
+num.recovery.threads.per.data.dir=1
+offsets.topic.replication.factor=1
+transaction.state.log.replication.factor=1
+transaction.state.log.min.isr=1
+log.cleanup.policy=delete
+log.retention.hours=2
+log.retention.bytes=1073741824
+log.segment.bytes=1073741824
+log.retention.check.interval.ms=300000
+log.retention.minutes=60
+log.retention.ms=3600000
+# zookeeper.connect=192.168.0.50:2181                                           #单机，一个IP：端口
+zookeeper.connect=192.168.0.50:2181,192.168.0.60:2181,192.168.0.70:2181         #群集，多IP：端口
+zookeeper.connection.timeout.ms=6000
+group.initial.rebalance.delay.ms=0
+
+=========================
 
 
 
-bin/kafka-topics.sh --zookeeper cdh101:2181 --describe --topic first
+#启动
+/usr/local/kafka/bin/kafka-server-start.sh -daemon /usr/local/kafka/config/server.properties
 
-bin/kafka-console-consumer.sh --bootstrap-server cdh101:9092 --topic first
+#停止
+/usr/local/kafka/bin/kafka-server-stop.sh
 
-bin/kafka-console-consumer.sh --bootstrap-server cdh101:9092 --from-beginning --topic first
+#创建 查看　删除topic
+/usr/local/kafka/bin/kafka-topics.sh --create --zookeeper cdh101:2181 --replication-factor 2 --partitions 1 --topic driverlog
+/usr/local/kafka/bin/kafka-topics.sh --create --zookeeper cdh101:2181 --replication-factor 2 --partitions 3 --topic camaralog
 
 
+/usr/local/kafka/bin/kafka-topics.sh --list --zookeeper cdh101:2181
 
+/usr/local/kafka/bin/kafka-topics.sh --delete --zookeeper cdh101:2181 --topic driverlog
+
+#生产消息
+/usr/local/kafka/bin/kafka-console-producer.sh --broker-list cdh101:9092,cdh102:9092,cdh103:9092 --topic driverlog
+
+#消费消息
+/usr/local/kafka/bin/kafka-console-consumer.sh --bootstrap-server 1cdh101:9092,cdh102:9092,cdh103:9092 --from-beginning --topic driverlog 
