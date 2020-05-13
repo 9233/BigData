@@ -175,6 +175,11 @@ offset　文件偏移量
 
 customer
 
+kafkak增加机器扩容
+1.分区格式化安装系统，安装kafka 配置broke id， zookeeper id 启动
+2.使用kafka脚本重新调整分区， reasign partion 
+2.1直接增加分区或者新加topic也可以使用到新机器
+
 ===CentOS 7 Kafka=========
 
 wget http://mirrors.hust.edu.cn/apache/zookeeper/zookeeper-3.4.13/zookeeper-3.4.13.tar.gz
