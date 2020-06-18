@@ -1,3 +1,198 @@
+==============以下是kafka官方文档================================
+https://kafka.apache.org/0110/documentation.html#operations
+
+kafka核心思想
+
+4.Design　设计理念：
+
+4.1: Motivation　设计初衷：
+
+把kafka设计成企业所有实时数据的统一处理平台,它必须满足高吞吐，大容量，低延迟，高容错，这样就出现了kafka的分区和消费模型
+
+4.2 Persistence　持久化　Don't fear the filesystem!
+kafka严重依赖文件系统来缓存消息,一般人思想会认为,读写硬盘上的文件系统非常慢，而实际上要看你怎么使用．
+首先随着硬盘技术的发展，硬盘顺序读(600MB/sec)写比随机读写(100k/sec)速度快几千倍！
+然后如果把数据放入内存中来管理，jvm对对象的开销非常高，随着数据的增加，Java garbage collection垃圾回收将会变得非常缓慢！并且一旦down机重启，进行内存重建将会非常耗时！
+其次现在操作系统都使用内存来做Disk缓存，所有的硬盘读写都会经过PageCache，写入硬盘文件系统的数据也会非常快．(参见操作系统原理)
+基于以上三点，与其把kafka设计成基于内存模式，把内存占满后，flush到文件系统，不如直接让数据写入文件系统，实际是写入到pagecache，再交给os内存管理来处理．
+这种以操作系统pagecache为核心（pagecache-centric）的设计思想，让kafka脱颖而出！
+
+
+4.3 Efficiency　效率
+我们在kafka效率上付出了巨大的努力！
+目前有两种造成效率低下的情况，过多的小I/O操作和过多的字节复制。
+１．过多的小I/O操作
+比如发送消息，存储，消费过多小文件，
+kafka解决办法是　使用message set将消息抽象成一个消息集，而不是一次发送一条消息，在发送，存贮和消费时候，服务器依次一次性将消息块附加到其日志中，而使用者一次获取大型线性块。
+这个简单的优化产生了数量级的加速。批处理导致更大的网络数据包、更大的顺序磁盘操作、连续的内存块等等，所有这些都允许Kafka将突发的随机消息写入流转换为线性写入流，并流向使用者。
+2.低效率是字节复制
+broke维护的消息日志本身只是一个文件目录，每个文件都由一系列以生产者和消费者使用的相同格式写入磁盘的消息集填充。
+维护这种通用格式可以优化最重要的操作：持久日志块的网络传输。
+现代unix操作系统提供了一个高度优化的代码路径，用于将数据从pagecache传输到套接字；在Linux中，这是通过sendfile系统调用完成的。
+要了解sendfile的影响，必须了解将数据从文件传输到套接字的通用数据路径：
+
+操作系统将数据从磁盘读取到内核空间的pagecache中
+
+应用程序将数据从内核空间读入用户空间缓冲区
+
+应用程序将数据写回内核空间中的socket套接字缓冲区
+
+操作系统将数据从socket缓冲区复制到NIC缓冲区，并在那里通过网络发送
+
+这显然效率低下，有四个拷贝和两个系统调用。使用sendfile，通过允许操作系统将数据从pagecache直接发送到网络，可以避免这种重新复制。所以在这个优化的路径中，只需要最后一个拷贝到NIC缓冲区。
+我们期望一个公共用例是一个主题上的多个使用者。使用上面的零拷贝优化，数据被精确地复制到pagecache中一次，并在每次使用时重复使用，
+而不是每次读取时都存储在内存中并复制到用户空间。这允许以接近网络连接限制的速率使用消息。
+pagecache和sendfile的这种组合意味着在一个Kafka集群中，用户主要被捕获，您将在磁盘上看不到任何读取活动，因为它们将完全从缓存中提供数据。
+
+另外一点：端到端批量压缩
+
+在某些情况下，瓶颈实际上不是CPU或磁盘，而是网络带宽。对于需要通过广域网在数据中心之间发送消息的数据管道来说，尤其如此。当然，用户总是可以一次压缩一条消息，而不需要Kafka提供任何支持，但这可能导致压缩率非常低，因为大部分冗余是由于相同类型的消息之间的重复（例如JSON中的字段名或web日志中的用户代理或公共字符串值）。有效的压缩要求将多条消息压缩在一起，而不是单独压缩每条消息。
+Kafka以一种高效的批处理格式支持这一点。一批消息可以以这种形式压缩并发送到服务器。这批消息将以压缩格式写入，并在日志中保持压缩状态，并且只由使用者解压缩。Kafka支持GZIP、Snappy和LZ4压缩协议
+
+4.4:
+4.4 The Producer　生产者
+生产者直接发送数据到partion leader,　至于如何找到partion leader和发送到哪个partion? kafka设计成每个broke都可以响应生产者的元数据请求，比如哪个broke是存活的，谁是partition的leader等
+客户端控制将消息发布到哪个分区。这可以是随机的，实现一种随机的负载平衡，也可以通过一些语义分区函数来实现，我们通过允许用户指定一个要分区key值来发送分区
+
+4.5 The Consumer消费者
+Kafka消费者通过"fetch"来找到broke上想要消费的分区,然后指定Log的偏移量offset,来接收从该偏移量开始的一系列数据，在这里消费者有非常大的控制权，比如我想重新消费数据，只需要指定offset即可．
+推还是拉？
+一个很根本的问题，消费者应该主动拉取数据还是等待kafka推送过去数据？
+首先，数据是producer推送push到kakfka，然后消费者通过不断轮询来拉取数据，这样有利也有弊！　利在于：推送模式无法满足消费者端多样性的问题，比如c1 30M/sec , c2 100M/sec　，kafka生产者 50M/sec,那么c1会不堪重负，c2确有资源浪费．拉取模式能让消费者根据自己的能力进行消费，会满负荷运行但不至于崩溃．弊在于：　加入生产者没有新数据产生了，消费者还要不断的去轮询poll,为了避免这种情况，我们在pull请求中设置了一些参数，这些参数允许使用者请求在“长轮询”中阻塞，等待数据到达．
+
+如何跟踪消费位置，是一个消息系统的核心问题！
+
+如何让消费者和broke在消费位置上达成一致，是一个非常重要的问题，假如broke在消息被消费后立即标记上已消费，但是消费者在这时候还没处理完数据就down机了，那消息就丢失了，大多数消息系统通过通知机制来解决，比如让消费者在消费完数据后，通知broke，broke收到确认通知后再标记为已消费．这样就避免了消息丢失，但是却带来的重复消费的问题，　比如，i1 i2 i3...消费者在消费完i2数据后，还没发出去确认ack就Crash了，那消费者重启后，还会从上一次i2位置重复消费．
+
+kafka创造了一种全新的解决方式！ 首先Topic被分割成一系列有序的分区Partition，每个分区能且只能被已订阅的消费者组里面的一个消费者消费，这就意味着：每个分区的消费位置，只是一个简单的整数，我们称之为offset偏移量．那么已消费的数据是非常少的，仅仅一个数字而已，这样就使得消息确认非常便捷！甚至可以指定offset重复消费数据
+
+4.6 Message Delivery Semantics
+
+    At most once—Messages may be lost but are never redelivered.
+    At least once—Messages are never lost but may be redelivered.
+    Exactly once—this is what people actually want, each message is delivered once and only once.
+精准一次性包括两个问题：1.生产者发布消息精准一次　２．消费者消费消息的精准一次
+卡夫卡有效地支持卡夫卡流中的一次精确传递，并且在卡夫卡主题之间传输和处理数据时，使用事务和幂等性保证生产者/消费者通常可以用于提供一次精确传递。对于其他目的地系统，一次交货通常需要与此类系统进行合作
+
+4.7 Replication
+
+The unit of replication is the topic partition. Under non-failure conditions, each partition in Kafka has a single leader and zero or more followers. The total number of replicas including the leader constitute the replication factor. All reads and writes go to the leader of the partition. Typically, there are many more partitions than brokers and the leaders are evenly distributed among brokers. The logs on the followers are identical to the leader's log—all have the same offsets and messages in the same order (though, of course, at any given time the leader may have a few as-yet unreplicated messages at the end of its log). 
+Kafka跨可配置数量的服务器复制每个主题分区的日志（您可以逐个主题设置此复制因子）。这允许在群集中的服务器发生故障时自动故障转移到这些副本，以便在出现故障时保持消息可用。
+复制单元是主题分区。在非失败条件下，卡夫卡的每个分区都有一个领导者和零个或多个追随者。包括leader在内的副本总数构成复制因子。所有的读写操作都会转到分区的前导。通常，比代理有更多的分区，并且领导在代理之间均匀分布。跟随者的日志与领导者的日志相同，都具有相同的偏移量和相同的消息顺序（当然，在任何给定的时间，领导者的日志末尾都可能有一些尚未复制的消息）。
+
+4.8 Log Compaction
+
+4.9 Quotas
+
+6 Operations
+
+Adding and removing topics
+ Topics are added and modified using the topic tool:	
+> bin/kafka-topics.sh --zookeeper zk_host:port/chroot --create --topic my_topic_name
+      --partitions 20 --replication-factor 3 --config x=y
+
+Modifying topics
+You can change the configuration or partitioning of a topic using the same topic tool.
+
+To add partitions you can do	
+> bin/kafka-topics.sh --zookeeper zk_host:port/chroot --alter --topic my_topic_name
+      --partitions 40
+
+And finally deleting a topic:
+> bin/kafka-topics.sh --zookeeper zk_host:port/chroot --delete --topic my_topic_name
+
+
+Balancing leadership
+平衡领导者
+
+每当broke停止或崩溃时，该代理的分区转移到其他副本的领导层。这意味着在默认情况下，当代理重新启动时，它将只作为其所有分区的跟随者，这意味着它不会用于客户端读写。
+为了避免这种不平衡，卡夫卡提出了首选复制品的概念。如果一个分区的副本列表是1,5,9，那么节点1最好作为节点5或9的领导，因为它在副本列表的前面。您可以让Kafka集群通过运行以下命令尝试将领导层恢复到恢复的副本
+
+Whenever a broker stops or crashes leadership for that broker's partitions transfers to other replicas. This means that by default when the broker is restarted it will only be a follower for all its partitions, meaning it will not be used for client reads and writes.
+
+To avoid this imbalance, Kafka has a notion of preferred replicas. If the list of replicas for a partition is 1,5,9 then node 1 is preferred as the leader to either node 5 or 9 because it is earlier in the replica list. You can have the Kafka cluster try to restore leadership to the restored replicas by running the command:
+	
+> bin/kafka-preferred-replica-election.sh --zookeeper zk_host:port/chroot
+Since running this command can be tedious you can also configure Kafka to do this automatically by setting the following configuration:
+	
+auto.leader.rebalance.enable=true
+
+
+
+Checking consumer position
+Sometimes it's useful to see the position of your consumers. We have a tool that will show the position of all consumers in a consumer group as well as how far behind the end of the log they are. To run this tool on a consumer group named my-group consuming a topic named my-topic would look like this:
+	
+> bin/kafka-run-class.sh kafka.tools.ConsumerOffsetChecker --zookeeper localhost:2181 --group test
+Group           Topic                          Pid Offset          logSize         Lag             Owner
+my-group        my-topic                       0   0               0               0               test_jkreps-mn-1394154511599-60744496-0
+my-group        my-topic                       1   0               0               0               test_jkreps-mn-1394154521217-1a0be913-0
+
+
+Expanding your cluster
+Adding servers to a Kafka cluster is easy, just assign them a unique broker id and start up Kafka on your new servers. However these new servers will not automatically be assigned any data partitions, so unless partitions are moved to them they won't be doing any work until new topics are created. So usually when you add machines to your cluster you will want to migrate some existing data to these machines.
+
+The process of migrating data is manually initiated but fully automated. Under the covers what happens is that Kafka will add the new server as a follower of the partition it is migrating and allow it to fully replicate the existing data in that partition. When the new server has fully replicated the contents of this partition and joined the in-sync replica one of the existing replicas will delete their partition's data.
+
+向Kafka集群添加服务器很简单，只需为它们分配一个惟一的代理id，然后在新服务器上启动Kafka。但是，这些新服务器不会自动分配任何数据分区，因此除非将分区移动到它们，否则在创建新主题之前，它们不会执行任何工作。因此，通常在将计算机添加到集群时，您会希望将一些现有数据迁移到这些计算机。
+
+迁移数据的过程是手动启动的，但完全自动化。在封面下，Kafka将添加新服务器作为它正在迁移的分区的追随者，并允许它完全复制该分区中的现有数据。当新服务器完全复制了此分区的内容并加入了同步副本时，现有副本之一将删除其分区的数据。
+
+
+6.3 Kafka Configuration
+
+
+Important Client Configurations
+The most important producer configurations control
+    acks
+    compression
+    batch size
+
+
+A Production Server Config
+Here is an example production server configuration:
+1
+# ZooKeeper
+zookeeper.connect=[list of ZooKeeper servers]
+ 
+# Log configuration
+num.partitions=8
+default.replication.factor=3
+log.dir=[List of directories. Kafka should have its own dedicated disk(s) or SSD(s).]
+ 
+# Other configurations
+broker.id=[An integer. Start with 0 and increment by 1 for each new broker.]
+listeners=[list of listeners]
+auto.create.topics.enable=false
+min.insync.replicas=2
+queued.max.requests=[number of concurrent requests]
+Our client configuration varies a fair amount between different use cases. 
+
+6.4 Java Version
+From a security perspective, we recommend you use the latest released version of JDK 1.8 
+For reference, here are the stats on one of LinkedIn's busiest clusters (at peak):
+
+    60 brokers
+    50k partitions (replication factor 2)
+    800k messages/sec in　300 MB/sec inbound, 1 GB/sec+ outbound
+
+
+
+The tuning looks fairly aggressive, but all of the brokers in that cluster have a 90% GC pause time of about 21ms, and they're doing less than 1 young GC per second. 
+
+6.5 Hardware and OS
+We are using dual quad-core Intel Xeon machines with 24GB of memory.
+
+You need sufficient memory to buffer active readers and writers. You can do a back-of-the-envelope estimate of memory needs by assuming you want to be able to buffer for 30 seconds and compute your memory need as write_throughput*30.
+
+The disk throughput is important. We have 8x7200 rpm SATA drives. In general disk throughput is the performance bottleneck, and more disks is better. Depending on how you configure flush behavior you may or may not benefit from more expensive disks (if you force flush often then higher RPM SAS drives may be better). 
+
+
+A typical ZooKeeper ensemble has 5 or 7 servers, which tolerates 2 and 3 servers down, respectively. If you have a small deployment, then using 3 servers is acceptable, but keep in mind that you'll only be able to tolerate 1 server down in this case.
+典型的ZooKeeper集成有5或7台服务器，分别允许2和3台服务器停机。如果您有一个小型部署，那么使用3台服务器是可以接受的，但是请记住，在这种情况下，您只能容忍1台服务器停机。
+
+==============以上是kafka官方文档================================
+
+
 参考文章
 https://www.cnblogs.com/zhqin/p/11992682.html
 https://www.cnblogs.com/zhqin/p/11992707.html
@@ -6,8 +201,6 @@ https://www.cnblogs.com/zhqin/p/11992707.html
 Kafka是一个分布式的基于发布/订阅模式的消息队列
 
 作为缓冲区，应对流量洪峰 统一日志接口
-
-
 
 如何理解kafka的“分布式”
 
@@ -34,9 +227,6 @@ Kafka是一个分布式的基于发布/订阅模式的消息队列
 只有当leader挂掉之后，follower才会可能当选为leader，继续完成和生产者和消费者之间的工作)
 9）follower： 每个分区多个副本中的“从”，实时从leader中同步数据，保持和leader数据的同步。
 leader发生故障时，某个follower会成为新的follower。
-
-
-
 
 =======
 一个topic有多个partition，每个partition又有多个副本，在这些副本中又有一个leader和多个follower。
