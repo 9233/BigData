@@ -217,7 +217,7 @@ HDFS被设计成支持非常大的文件。与HDFS兼容的应用程序是那些
 
 Replication Pipelining复制流水线
 When a client is writing data to an HDFS file with a replication factor of three, the NameNode retrieves a list of DataNodes using a replication target choosing algorithm. This list contains the DataNodes that will host a replica of that block. The client then writes to the first DataNode. The first DataNode starts receiving the data in portions, writes each portion to its local repository and transfers that portion to the second DataNode in the list. The second DataNode, in turn starts receiving each portion of the data block, writes that portion to its repository and then flushes that portion to the third DataNode. Finally, the third DataNode writes the data to its local repository. Thus, a DataNode can be receiving data from the previous one in the pipeline and at the same time forwarding data to the next one in the pipeline. Thus, the data is pipelined from one DataNode to the next.
-当客户机将数据写入复制因子为3的HDFS文件时，NameNode使用复制目标选择算法检索数据节点列表。此列表包含将承载该块副本的DataNode。然后，客户机写入第一个DataNode。第一个DataNode开始分部分接收数据，将每个部分写入其本地存储库，并将该部分传输到列表中的第二个DataNode。第二个DataNode依次开始接收数据块的每个部分，将该部分写入其存储库，然后将该部分刷新到第三个DataNode。最后，第三个DataNode将数据写入其本地存储库。因此，数据节点可以从管道中的前一个节点接收数据，同时将数据转发给管道中的下一个节点。因此，数据通过管道从一个数据节点传输到下一个数据节点。
+当客户机将数据写入复本为3的HDFS文件时，NameNode使用复制目标选择算法检索数据节点列表。此列表包含将承载该块副本的DataNode。然后，客户机写入第一个DataNode。第一个DataNode开始分部分接收数据，将每个部分写入其本地存储库，并将该部分传输到列表中的第二个DataNode。第二个DataNode依次开始接收数据块的每个部分，将该部分写入其存储库，然后将该部分刷新到第三个DataNode。最后，第三个DataNode将数据写入其本地存储库。因此，数据节点可以从管道中的前一个节点接收数据，同时将数据转发给管道中的下一个节点。因此，数据通过管道从一个数据节点传输到下一个数据节点。
 
 
 Accessibility数据访问
@@ -409,7 +409,39 @@ It is vital for the correct operation of an HA cluster that only one of the Name
 
 对于HA集群的正确操作，一次只有一个namenode处于活动状态是至关重要的。否则，名称空间状态将在这两者之间迅速分化，有数据丢失或其他不正确结果的风险。为了确保这个属性并防止所谓的“分裂大脑场景”，JournalNodes每次只允许一个NameNode成为一个writer。在故障转移期间，要变为活动状态的NameNode将简单地接管写入JournalNodes的角色，这将有效地阻止另一个NameNode继续处于活动状态，从而允许新的active安全地继续进行故障转移。
 
+Automatic failover adds two new components to an HDFS deployment: a ZooKeeper quorum, and the ZKFailoverController process (abbreviated as ZKFC).
 
+Apache ZooKeeper is a highly available service for maintaining small amounts of coordination data, notifying clients of changes in that data, and monitoring clients for failures. The implementation of automatic HDFS failover relies on ZooKeeper for the following things:
+
+    Failure detection - each of the NameNode machines in the cluster maintains a persistent session in ZooKeeper. If the machine crashes, the ZooKeeper session will expire, notifying the other NameNode(s) that a failover should be triggered.
+
+    Active NameNode election - ZooKeeper provides a simple mechanism to exclusively elect a node as active. If the current active NameNode crashes, another node may take a special exclusive lock in ZooKeeper indicating that it should become the next active.
+
+The ZKFailoverController (ZKFC) is a new component which is a ZooKeeper client which also monitors and manages the state of the NameNode. Each of the machines which runs a NameNode also runs a ZKFC, and that ZKFC is responsible for:
+
+    Health monitoring - the ZKFC pings its local NameNode on a periodic basis with a health-check command. So long as the NameNode responds in a timely fashion with a healthy status, the ZKFC considers the node healthy. If the node has crashed, frozen, or otherwise entered an unhealthy state, the health monitor will mark it as unhealthy.
+
+    ZooKeeper session management - when the local NameNode is healthy, the ZKFC holds a session open in ZooKeeper. If the local NameNode is active, it also holds a special “lock” znode. This lock uses ZooKeeper’s support for “ephemeral” nodes; if the session expires, the lock node will be automatically deleted.
+
+    ZooKeeper-based election - if the local NameNode is healthy, and the ZKFC sees that no other node currently holds the lock znode, it will itself try to acquire the lock. If it succeeds, then it has “won the election”, and is responsible for running a failover to make its local NameNode active. The failover process is similar to the manual failover described above: first, the previous active is fenced if necessary, and then the local NameNode transitions to active state.
+自动故障转移为HDFS部署添加了两个新组件：ZooKeeper仲裁和ZKFailoverController进程（缩写为ZKFC）。
+
+
+apachezookeeper是一个高可用性的服务，用于维护少量的协调数据，通知客户数据中的更改，并监视客户机的故障。HDFS自动故障切换的实现依赖于ZooKeeper执行以下操作：
+
+
+故障检测-集群中的每个NameNode机器都在ZooKeeper中维护一个持久会话。如果机器崩溃，ZooKeeper会话将过期，通知其他NameNode应该触发故障转移。
+
+
+activenamenodeelection-ZooKeeper提供了一个简单的机制来独占地选择一个节点作为Active。如果当前活动的NameNode崩溃，另一个节点可能在ZooKeeper中获得一个特殊的独占锁，指示它应该成为下一个活动的。
+
+
+ZKFailoverController（ZKFC）是一个新组件，它是一个ZooKeeper客户端，它还监视和管理NameNode的状态。运行NameNode的每台机器也运行一个ZKFC，ZKFC负责：
+
+
+运行状况监视—ZKFC定期使用运行状况检查命令ping本地NameNode。只要NameNode以健康状态及时响应，ZKFC就认为节点是健康的。如果节点已崩溃、冻结或以其他方式进入不正常状态，则运行状况监视器将其标记为不正常。
+ZooKeeper会话管理—当本地NameNode正常时，ZKFC会在ZooKeeper中保持一个打开的会话。如果本地NameNode是活动的，它还持有一个特殊的“lock”znode。这个锁使用ZooKeeper对“短暂”节点的支持；如果会话过期，锁节点将自动删除。
+基于ZooKeeper的选举-如果本地NameNode正常，并且ZKFC发现当前没有其他节点持有锁znode，它自己将尝试获取锁。如果它成功了，那么它就“赢得了选举”，并负责运行故障转移以使其本地NameNode处于活动状态。故障转移过程类似于上面描述的手动故障转移：首先，如果需要，对前一个活动节点进行隔离，然后将本地NameNode转换为active状态。
 Hardware resources
 
 In order to deploy an HA cluster, you should prepare the following:
@@ -419,19 +451,4 @@ In order to deploy an HA cluster, you should prepare the following:
     JournalNode machines - the machines on which you run the JournalNodes. The JournalNode daemon is relatively lightweight, so these daemons may reasonably be collocated on machines with other Hadoop daemons, for example NameNodes, the JobTracker, or the YARN ResourceManager. Note: There must be at least 3 JournalNode daemons, since edit log modifications must be written to a majority of JNs. This will allow the system to tolerate the failure of a single machine. You may also run more than 3 JournalNodes, but in order to actually increase the number of failures the system can tolerate, you should run an odd number of JNs, (i.e. 3, 5, 7, etc.). Note that when running with N JournalNodes, the system can tolerate at most (N - 1) / 2 failures and continue to function normally.
 
 Note that, in an HA cluster, the Standby NameNodes also performs checkpoints of the namespace state, and thus it is not necessary to run a Secondary NameNode, CheckpointNode, or BackupNode in an HA cluster. In fact, to do so would be an error. This also allows one who is reconfiguring a non-HA-enabled HDFS cluster to be HA-enabled to reuse the hardware which they had previously dedicated to the Secondary NameNode.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
