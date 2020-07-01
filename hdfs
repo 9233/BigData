@@ -1,60 +1,437 @@
-hdfs namenode HA
-https://blog.51cto.com/12445535/2351355?source=dra
-hadoop-ha 严格来说应该分成各个组件的HA 机制
-HA技术要点 ：
-元数据管理 
-2个namenode的状态管理 
-如何防止脑裂
+HDFS Architecture
 
-Edits 日志只能有一份，只有Active 状态的namenode 节点可以做写操作
-两个namenode 都可以读取edits
-共享的edits 放在一个共享存储中管理（qjournal 和NFS 两个主流实现）
-1、客户端访问active namenode //双namenode中的fsimages一开始初始化的时候，都是完全一样，都是空的
-2、写数据的时候，写入数据写到active namenode中内存元数据的时候，也会实时的更新到qjonal集群edits日志文件系统中
-3、standay 会没隔一段时间去读取edits文件，并更新到自己的元数据内存中，保持和active最小差异
-4、每隔一段时间，standay中的fsimage会和edits更新一次，保持在本地
-备注：edits既不属于active也不属于standay 依靠第三方qjonal集群 完全独立
-假设 active namenode 宕机了，此时 standay 和active有点差异，但是差异很小，standay迅速从edits日志系统中更新最新一次老的active的操作，完全和老active一样的元数据，那么就要可以迅速的对外来提供服务。
+    Introduction
+    Assumptions and Goals
+        Hardware Failure
+        Streaming Data Access
+        Large Data Sets
+        Simple Coherency Model
+        “Moving Computation is Cheaper than Moving Data”
+        Portability Across Heterogeneous Hardware and Software Platforms
+    NameNode and DataNodes
+    The File System Namespace
+    Data Replication
+        Replica Placement: The First Baby Steps
+        Replica Selection
+        Safemode
+    The Persistence of File System Metadata
+    The Communication Protocols
+    Robustness
+        Data Disk Failure, Heartbeats and Re-Replication
+        Cluster Rebalancing
+        Data Integrity
+        Metadata Disk Failure
+        Snapshots
+    Data Organization
+        Data Blocks
+        Replication Pipelining
+    Accessibility
+        FS Shell
+        DFSAdmin
+        Browser Interface
+    Space Reclamation
+        File Deletes and Undeletes
+        Decrease Replication Factor
 
-B、需要一个状态管理功能模块
-实现了一个zkfailover，常驻在每一个namenode 所在的节点
-每一个zkfailover 负责监控自己所在的namenode 节点，利用zk 进行状态标识
-当需要进行状态切换时，由zkfailover 来负责切换
-切换时需要防止brain split 现象的发生
-1、active上的zkfc实时监控自己namenode的状态健康信息
-2、如果发生了异常之后会控制standay的zkfc
-3、standay的zkfc收到异常之后会去kill -9 active namenode
-4、如果standay的zkfc没有成功得到kill -9 之后的返回值的话，那么就启动脚本去杀死active namenode 脚本位置为/bin/true
-5、杀死active namenode之后，就成功得到访问值
-6、standay的zkfc通知standay namenode称为active 对外服务。
+Assumptions and Goals 假设和目标
+Hardware Failure 硬件故障
 
-什么是zkfc：就是基于zookeeper实现的失败切换控制器
+Hardware failure is the norm rather than the exception. An HDFS instance may consist of hundreds or thousands of server machines, each storing part of the file system’s data. The fact that there are a huge number of components and that each component has a non-trivial probability of failure means that some component of HDFS is always non-functional. Therefore, detection of faults and quick, automatic recovery from them is a core architectural goal of HDFS.
 
-如何在状态切换时避免brain split(脑裂)？
+硬件故障是常态而不是例外。一个HDFS实例可能由成百上千台服务器组成，每台服务器都存储文件系统的部分数据。事实上，有大量的组件，而且每个组件都有不小的故障概率，这意味着HDFS的某些组件总是不起作用的。因此，从HDFS的核心故障中快速恢复是一个目标。
 
-  脑裂：active namenode工作不正常后，zkfc在zookeeper中写入一些数据，表明异常，这时standby namenode中的zkfc读到异常信息，并将standby节点置为active。但是，如果之前的active namenode并没有真的死掉，出现了假死（死了一会儿后又正常了），这样，就有两台namenode同时工作了。这种现象称为脑裂。
 
- 解决方案：standby namenode感知到主用节点出现异常后并不会立即切换状态，zkfc会首先通过ssh远程杀死active节点的 namenode进程（kill -9 进程号）。如果在一段时间内standby的namenode节点没有收到kill执行成功的回执，standby节点会执行一个自定义脚本，尽量保证不会出现脑裂问题！这个机制在hadoop中称为fencing（包括ssh发送kill指令，执行自定义脚本两道保障）。
-从解决方案中可知；当发生active节点崩坏时；hadoop会进行以下两个操作：
+Streaming Data Access 流式数据访问
 
-1）通过ssh kill掉active节点的namenode进程
+Applications that run on HDFS need streaming access to their data sets. They are not general purpose applications that typically run on general purpose file systems. HDFS is designed more for batch processing rather than interactive use by users. The emphasis is on high throughput of data access rather than low latency of data access. POSIX imposes many hard requirements that are not needed for applications that are targeted for HDFS. POSIX semantics in a few key areas has been traded to increase data throughput rates.
 
-2）执行自定义脚本
-原文：https://blog.csdn.net/qq_22310551/article/details/85700978
+在HDFS上运行的应用程序需要对其数据集进行流式访问。它们不是通常在通用文件系统上运行的通用应用程序。HDFS更多的是为批处理而设计的，而不是用户的交互使用。重点是数据访问的高吞吐量，而不是数据访问的低延迟。POSIX规定了许多针对HDFS的应用程序不需要的硬需求。一些关键领域的POSIX语义已经被交易来提高数据吞吐量。
 
-如何没有及时得到kill的成功返回信息，在调用一个用户指定的shell脚本程序。
-[root@hadoop-node01 bin]# ls -l /bin/true //脚本位置在bin下面
--rwxr-xr-x. 1 root root 21112 10月 15 2014 /bin/true
 
-在cdh中这个程序在
-HDFS High Availability 防御方法
-dfs.ha.fencing.methods
-用于服务防御的防御方法列表。shell(./cloudera_manager_agent_fencer.py) 是一种设计为使用 Cloudera Manager Agent 的防御机制。sshfence 方法使用 SSH。如果使用自定义防御程序(可能与共享存储、电源装置或网络交换机通信)，则使用 shell 调用它们。
-Cloudera Manager 防御策略的超时时限
-dfs.ha.fencing.cloudera_manager.timeout_millis 10000
-基于 Cloudera Manager 代理的防御程序使用的超时时限（毫秒）
+Large Data Sets 大数据集
 
-zookeeper在HA机制中的作用
-1、QJN集群需要zk实现协调服务
-2、namenode中谁是active谁是standay记录在zk中
-3、zkfc基于zookeeper实现失败切换控制器
+Applications that run on HDFS have large data sets. A typical file in HDFS is gigabytes to terabytes in size. Thus, HDFS is tuned to support large files. It should provide high aggregate data bandwidth and scale to hundreds of nodes in a single cluster. It should support tens of millions of files in a single instance.
+
+运行在HDFS上的应用程序有巨大的数据集，一个典型的HDFS文件有上G到T的大小，因而，HDFS需要支持大文件，应该提供高聚合的数据带宽并且一个集群可以扩容到上百个节点，它应该单个实例支持上千万的文件．
+
+Simple Coherency Model一致性模型
+
+HDFS applications need a write-once-read-many access model for files. A file once created, written, and closed need not be changed except for appends and truncates. Appending the content to the end of the files is supported but cannot be updated at arbitrary point. This assumption simplifies data coherency issues and enables high throughput data access. A MapReduce application or a web crawler application fits perfectly with this model.
+HDFS应用程序需要一个写一读多读的文件访问模型。文件一旦创建、写入和关闭，除了附加和截断外，不需要更改。支持将内容附加到文件末尾，但不能在任意点更新。这种假设简化了数据一致性问题，并实现了高吞吐量的数据访问。MapReduce应用程序或web爬虫应用程序非常适合此模型。
+
+“Moving Computation is Cheaper than Moving Data”“移动计算比移动数据便宜”
+
+A computation requested by an application is much more efficient if it is executed near the data it operates on. This is especially true when the size of the data set is huge. This minimizes network congestion and increases the overall throughput of the system. The assumption is that it is often better to migrate the computation closer to where the data is located rather than moving the data to where the application is running. HDFS provides interfaces for applications to move themselves closer to where the data is located.Portability Across Heterogeneous Hardware and Software Platforms
+如果应用程序所请求的计算在其操作的数据附近执行，则效率要高得多。当数据集非常大时，尤其如此。这样可以最大限度地减少网络拥塞并提高系统的总体吞吐量。假设是，通常最好将计算迁移到数据所在的位置，而不是将数据移动到应用程序运行的位置。HDFS为应用程序提供接口，使它们能够更靠近数据所在的位置。具有硬件和软件平台的可移植性
+
+
+HDFS has been designed to be easily portable from one platform to another. This facilitates widespread adoption of HDFS as a platform of choice for a large set of applications.
+HDFS被设计成易于从一个平台移植到另一个平台。这有助于广泛采用HDFS作为大量应用程序的选择平台
+
+
+
+NameNode and DataNodes
+
+HDFS has a master/slave architecture. An HDFS cluster consists of a single NameNode, a master server that manages the file system namespace and regulates access to files by clients. In addition, there are a number of DataNodes, usually one per node in the cluster, which manage storage attached to the nodes that they run on. HDFS exposes a file system namespace and allows user data to be stored in files. Internally, a file is split into one or more blocks and these blocks are stored in a set of DataNodes. The NameNode executes file system namespace operations like opening, closing, and renaming files and directories. It also determines the mapping of blocks to DataNodes. The DataNodes are responsible for serving read and write requests from the file system’s clients. The DataNodes also perform block creation, deletion, and replication upon instruction from the NameNode.
+
+The NameNode and DataNode are pieces of software designed to run on commodity machines. These machines typically run a GNU/Linux operating system (OS). HDFS is built using the Java language; any machine that supports Java can run the NameNode or the DataNode software. Usage of the highly portable Java language means that HDFS can be deployed on a wide range of machines. A typical deployment has a dedicated machine that runs only the NameNode software. Each of the other machines in the cluster runs one instance of the DataNode software. The architecture does not preclude running multiple DataNodes on the same machine but in a real deployment that is rarely the case.
+
+The existence of a single NameNode in a cluster greatly simplifies the architecture of the system. The NameNode is the arbitrator and repository for all HDFS metadata. The system is designed in such a way that user data never flows through the NameNode.
+HDFS具有主/从体系结构。HDFS集群由一个NameNode和一个主服务器组成，主服务器管理文件系统名称空间并控制客户端对文件的访问。此外，还有许多datanode，通常每个节点在集群中一个，它们管理连接到运行它们的节点上的存储。HDFS公开一个文件系统名称空间，并允许用户数据存储在文件中。在内部，文件被分成一个或多个块，这些块存储在一组datanode中。NameNode执行文件系统命名空间操作，如打开、关闭和重命名文件和目录。它还确定块到数据节点的映射。数据节点负责处理来自文件系统客户端的读写请求。datanode还根据来自NameNode的指令执行块创建、删除和复制。
+NameNode和DataNode是设计用于在商品计算机上运行的软件。这些机器通常运行GNU/Linux操作系统（OS）。HDFS是使用Java语言构建的；任何支持Java的机器都可以运行NameNode或DataNode软件。使用高度可移植的Java语言意味着HDFS可以部署在各种机器上。典型的部署有一台只运行NameNode软件的专用计算机。群集中的其他每台计算机都运行DataNode软件的一个实例。该体系结构不排除在同一台机器上运行多个数据节点，但在实际部署中却很少出现这种情况。
+
+集群中单个NameNode的存在大大简化了系统的体系结构。NameNode是所有HDFS元数据的仲裁器和存储库。系统的设计使得用户数据永远不会流经NameNode。
+
+
+
+The File System Namespace
+
+HDFS supports a traditional hierarchical file organization. A user or an application can create directories and store files inside these directories. The file system namespace hierarchy is similar to most other existing file systems; one can create and remove files, move a file from one directory to another, or rename a file. HDFS supports user quotas and access permissions. HDFS does not support hard links or soft links. However, the HDFS architecture does not preclude implementing these features.
+
+While HDFS follows naming convention of the FileSystem, some paths and names (e.g. /.reserved and .snapshot ) are reserved. Features such as transparent encryption and snapshot use reserved paths.
+
+The NameNode maintains the file system namespace. Any change to the file system namespace or its properties is recorded by the NameNode. An application can specify the number of replicas of a file that should be maintained by HDFS. The number of copies of a file is called the replication factor of that file. This information is stored by the NameNode.
+文件系统命名空间
+
+
+HDFS支持传统的分层文件组织。用户或应用程序可以创建目录并在这些目录中存储文件。文件系统命名空间层次结构与大多数其他现有文件系统相似；可以创建和删除文件，将文件从一个目录移动到另一个目录，或重命名文件。HDFS支持用户配额和访问权限。HDFS不支持硬链接或软链接。然而，HDFS体系结构并不排除实现这些特性。
+
+
+虽然HDFS遵循文件系统的命名约定，但一些路径和名称（例如/.reserved和.snapshot）是保留的。透明加密和快照等功能使用保留路径。
+
+
+NameNode维护文件系统名称空间。对文件系统命名空间或其属性的任何更改都由NameNode记录。应用程序可以指定应由HDFS维护的文件的副本数量。文件的副本数称为该文件的复制因子。此信息由NameNode存储。
+
+
+Data Replication数据复制
+
+HDFS is designed to reliably store very large files across machines in a large cluster. It stores each file as a sequence of blocks. The blocks of a file are replicated for fault tolerance. The block size and replication factor are configurable per file.
+
+All blocks in a file except the last block are the same size, while users can start a new block without filling out the last block to the configured block size after the support for variable length block was added to append and hsync.
+
+An application can specify the number of replicas of a file. The replication factor can be specified at file creation time and can be changed later. Files in HDFS are write-once (except for appends and truncates) and have strictly one writer at any time.
+
+The NameNode makes all decisions regarding replication of blocks. It periodically receives a Heartbeat and a Blockreport from each of the DataNodes in the cluster. Receipt of a Heartbeat implies that the DataNode is functioning properly. A Blockreport contains a list of all blocks on a DataNode.
+
+HDFS被设计为在一个大型集群中跨机器可靠地存储非常大的文件。它将每个文件存储为一个块序列。复制文件块以实现容错。每个文件都可以配置块大小和复制因子。
+一个文件中除了最后一个块以外的所有块都是相同的大小，而在append和hsync中添加了对可变长度块的支持之后，用户可以启动一个新的块，而不必将最后一个块填充到配置的块大小。
+应用程序可以指定文件的副本数。复制因子可以在文件创建时指定，以后可以更改。HDFS中的文件只写一次（除了appends和truncates），并且在任何时候都有严格的一个writer。
+NameNode做出关于块复制的所有决策。它定期从集群中的每个datanode接收心跳和Blockreport。接收到心跳意味着DataNode运行正常。Blockreport包含DataNode上所有块的列表。
+
+
+
+Replica Placement: The First Baby Steps
+
+The placement of replicas is critical to HDFS reliability and performance. Optimizing replica placement distinguishes HDFS from most other distributed file systems. This is a feature that needs lots of tuning and experience. The purpose of a rack-aware replica placement policy is to improve data reliability, availability, and network bandwidth utilization. The current implementation for the replica placement policy is a first effort in this direction. The short-term goals of implementing this policy are to validate it on production systems, learn more about its behavior, and build a foundation to test and research more sophisticated policies.
+
+Large HDFS instances run on a cluster of computers that commonly spread across many racks. Communication between two nodes in different racks has to go through switches. In most cases, network bandwidth between machines in the same rack is greater than network bandwidth between machines in different racks.
+
+The NameNode determines the rack id each DataNode belongs to via the process outlined in Hadoop Rack Awareness. A simple but non-optimal policy is to place replicas on unique racks. This prevents losing data when an entire rack fails and allows use of bandwidth from multiple racks when reading data. This policy evenly distributes replicas in the cluster which makes it easy to balance load on component failure. However, this policy increases the cost of writes because a write needs to transfer blocks to multiple racks.
+
+For the common case, when the replication factor is three, HDFS’s placement policy is to put one replica on the local machine if the writer is on a datanode, otherwise on a random datanode in the same rack as that of the writer, another replica on a node in a different (remote) rack, and the last on a different node in the same remote rack. This policy cuts the inter-rack write traffic which generally improves write performance. The chance of rack failure is far less than that of node failure; this policy does not impact data reliability and availability guarantees. However, it does reduce the aggregate network bandwidth used when reading data since a block is placed in only two unique racks rather than three. With this policy, the replicas of a file do not evenly distribute across the racks. One third of replicas are on one node, two thirds of replicas are on one rack, and the other third are evenly distributed across the remaining racks. This policy improves write performance without compromising data reliability or read performance.
+对于常见情况，当复制因子为3时，HDFS的放置策略是：如果writer位于datanode上，则将一个副本放在本地计算机上；否则，将一个副本放在与writer相同机架中的随机数据节点上；另一个副本放在不同（远程）机架中的节点上，最后一个副本放在同一远程机架中的不同节点上。此策略可减少机架间的写入流量，从而提高写入性能。机架故障的概率远小于节点故障的概率；此策略不会影响数据可靠性和可用性保证。但是，它确实减少了读取数据时使用的总网络带宽，因为一个块只放在两个唯一的机架中，而不是放在三个机架中。使用此策略，文件的副本不会均匀分布在机架上。三分之一的副本位于一个节点上，三分之二的副本位于一个机架上，另外三分之一的副本均匀分布在其余机架上。此策略在不影响数据可靠性或读取性能的情况下提高了写入性能。
+
+If the replication factor is greater than 3, the placement of the 4th and following replicas are determined randomly while keeping the number of replicas per rack below the upper limit (which is basically (replicas - 1) / racks + 2).
+
+Because the NameNode does not allow DataNodes to have multiple replicas of the same block, maximum number of replicas created is the total number of DataNodes at that time.
+
+After the support for Storage Types and Storage Policies was added to HDFS, the NameNode takes the policy into account for replica placement in addition to the rack awareness described above. The NameNode chooses nodes based on rack awareness at first, then checks that the candidate node have storage required by the policy associated with the file. If the candidate node does not have the storage type, the NameNode looks for another node. If enough nodes to place replicas can not be found in the first path, the NameNode looks for nodes having fallback storage types in the second path.
+
+The current, default replica placement policy described here is a work in progress.
+
+
+
+Replica Selection副本选择
+
+To minimize global bandwidth consumption and read latency, HDFS tries to satisfy a read request from a replica that is closest to the reader. If there exists a replica on the same rack as the reader node, then that replica is preferred to satisfy the read request. If HDFS cluster spans multiple data centers, then a replica that is resident in the local data center is preferred over any remote replica.
+为了最小化全局带宽消耗和读取延迟，HDFS尝试满足来自最接近读取用户的副本的读取请求。如果在与读取用户节点相同的机架上存在一个副本，则首选该副本来满足读取请求。如果HDFS集群跨越多个数据中心，那么驻留在本地数据中心的副本比任何远程副本都要好。
+
+
+Safemode安全模式
+
+On startup, the NameNode enters a special state called Safemode. Replication of data blocks does not occur when the NameNode is in the Safemode state. The NameNode receives Heartbeat and Blockreport messages from the DataNodes. A Blockreport contains the list of data blocks that a DataNode is hosting. Each block has a specified minimum number of replicas. A block is considered safely replicated when the minimum number of replicas of that data block has checked in with the NameNode. After a configurable percentage of safely replicated data blocks checks in with the NameNode (plus an additional 30 seconds), the NameNode exits the Safemode state. It then determines the list of data blocks (if any) that still have fewer than the specified number of replicas. The NameNode then replicates these blocks to other DataNodes.
+启动时，NameNode进入一个称为Safemode的特殊状态。当NameNode处于Safemode状态时，不会复制数据块。NameNode从DataNodes接收Heartbeat和Blockreport消息。Blockreport包含DataNode托管的数据块列表。每个块都有指定的最小副本数。当数据块的最小副本数已与NameNode签入时，该块被认为是安全复制的。在使用NameNode签入安全复制数据块的可配置百分比（加上额外的30秒），NameNode退出Safemode状态。然后，它确定仍具有少于指定数量副本的数据块（如果有）的列表。NameNode然后将这些块复制到其他datanode。
+
+
+The Persistence of File System Metadata元数据持久化
+
+The HDFS namespace is stored by the NameNode. The NameNode uses a transaction log called the EditLog to persistently record every change that occurs to file system metadata. For example, creating a new file in HDFS causes the NameNode to insert a record into the EditLog indicating this. Similarly, changing the replication factor of a file causes a new record to be inserted into the EditLog. The NameNode uses a file in its local host OS file system to store the EditLog. The entire file system namespace, including the mapping of blocks to files and file system properties, is stored in a file called the FsImage. The FsImage is stored as a file in the NameNode’s local file system too.
+HDFS名称空间由NameNode存储。NameNode使用一个名为EditLog的事务日志来持久地记录对文件系统元数据所做的每个更改。例如，在HDFS中创建一个新文件会导致NameNode在EditLog中插入一条记录来指示这一点。类似地，将一个新的editfactor插入到记录中。NameNode使用其本地主机操作系统文件系统中的一个文件来存储EditLog。整个文件系统名称空间（包括块到文件和文件系统属性的映射）存储在名为FsImage的文件中。FsImage也作为文件存储在NameNode的本地文件系统中。
+
+
+The NameNode keeps an image of the entire file system namespace and file Blockmap in memory. When the NameNode starts up, or a checkpoint is triggered by a configurable threshold, it reads the FsImage and EditLog from disk, applies all the transactions from the EditLog to the in-memory representation of the FsImage, and flushes out this new version into a new FsImage on disk. It can then truncate the old EditLog because its transactions have been applied to the persistent FsImage. This process is called a checkpoint. The purpose of a checkpoint is to make sure that HDFS has a consistent view of the file system metadata by taking a snapshot of the file system metadata and saving it to FsImage. Even though it is efficient to read a FsImage, it is not efficient to make incremental edits directly to a FsImage. Instead of modifying FsImage for each edit, we persist the edits in the Editlog. During the checkpoint the changes from Editlog are applied to the FsImage. A checkpoint can be triggered at a given time interval (dfs.namenode.checkpoint.period) expressed in seconds, or after a given number of filesystem transactions have accumulated (dfs.namenode.checkpoint.txns). If both of these properties are set, the first threshold to be reached triggers a checkpoint.
+NameNode在内存中保存整个文件系统名称空间和文件块映射的图像。当NameNode启动时，或者检查点由可配置的阈值触发时，它从磁盘读取FsImage和EditLog，将EditLog中的所有事务应用到FsImage的内存中表示，并将这个新版本刷新到磁盘上的新FsImage中。然后它可以截断旧的EditLog，因为它的事务已应用于持久的FsImage。这个过程称为检查点。检查点的目的是通过获取文件系统元数据的快照并将其保存到FsImage来确保HDFS对文件系统元数据的视图是一致的。尽管读取FsImage是高效的，但是直接对FsImage进行增量编辑是不高效的。我们没有为每次编辑修改FsImage，而是将编辑保存在Editlog中。在检查点期间，Editlog中的更改将应用于FsImage。可以在给定的时间间隔触发检查点(dfs.namenode.checkpoint.period）以秒为单位，或在文件系统事务累积到给定数量之后(dfs.namenode.checkpoint.txns）。如果设置了这两个属性，则要达到的第一个阈值将触发检查点。
+
+The DataNode stores HDFS data in files in its local file system. The DataNode has no knowledge about HDFS files. It stores each block of HDFS data in a separate file in its local file system. The DataNode does not create all files in the same directory. Instead, it uses a heuristic to determine the optimal number of files per directory and creates subdirectories appropriately. It is not optimal to create all local files in the same directory because the local file system might not be able to efficiently support a huge number of files in a single directory. When a DataNode starts up, it scans through its local file system, generates a list of all HDFS data blocks that correspond to each of these local files, and sends this report to the NameNode. The report is called the Blockreport.
+DataNode将HDFS数据存储在其本地文件系统中的文件中。DataNode不知道HDFS文件。它将每个HDFS数据块存储在本地文件系统中的单独文件中。DataNode不会在同一目录中创建所有文件。相反，它使用启发式来确定每个目录的最佳文件数，并适当地创建子目录。在同一目录中创建所有本地文件不是最佳选择，因为本地文件系统可能无法有效地支持单个目录中的大量文件。当DataNode启动时，它会扫描其本地文件系统，生成与这些本地文件对应的所有HDFS数据块的列表，并将此报告发送给NameNode。这个报告叫做Blockreport。
+
+
+
+
+
+
+通信协议
+所有的HDFS通信协议都是在TCP/IP协议之上的。客户机与NameNode计算机上的可配置TCP端口建立连接。它与NameNode通信ClientProtocol。DataNodes使用DataNode协议与NameNode通信。远程过程调用（RPC）抽象包装了客户端协议和数据节点协议。根据设计，NameNode从不启动任何rpc。相反，它只响应数据节点或客户端发出的RPC请求。
+All HDFS communication protocols are layered on top of the TCP/IP protocol. A client establishes a connection to a configurable TCP port on the NameNode machine. It talks the ClientProtocol with the NameNode. The DataNodes talk to the NameNode using the DataNode Protocol. A Remote Procedure Call (RPC) abstraction wraps both the Client Protocol and the DataNode Protocol. By design, the NameNode never initiates any RPCs. Instead, it only responds to RPC requests issued by DataNodes or clients.
+
+
+稳健性
+HDFS的主要目标是在出现故障的情况下可靠地存储数据。三种常见的故障类型是NAMENODE故障、数据阳极故障和网络分区。
+The primary objective of HDFS is to store data reliably even in the presence of failures. The three common types of failures are NameNode failures, DataNode failures and network partitions.
+
+
+Data Disk Failure, Heartbeats and Re-Replication
+
+Each DataNode sends a Heartbeat message to the NameNode periodically. A network partition can cause a subset of DataNodes to lose connectivity with the NameNode. The NameNode detects this condition by the absence of a Heartbeat message. The NameNode marks DataNodes without recent Heartbeats as dead and does not forward any new IO requests to them. Any data that was registered to a dead DataNode is not available to HDFS any more. DataNode death may cause the replication factor of some blocks to fall below their specified value. The NameNode constantly tracks which blocks need to be replicated and initiates replication whenever necessary. The necessity for re-replication may arise due to many reasons: a DataNode may become unavailable, a replica may become corrupted, a hard disk on a DataNode may fail, or the replication factor of a file may be increased.
+每个DataNode定期向NameNode发送心跳消息。网络分区可能导致datanode的子集与NameNode失去连接。NameNode通过没有心跳消息来检测这种情况。NameNode将没有最近心跳的DataNodes标记为dead，并且不向它们转发任何新的IO请求。任何注册到死数据节点的数据对HDFS不再可用。某些数据块的复制因子可能低于其指定的死亡原因值。NameNode不断跟踪需要复制的块，并在必要时启动复制。重新复制的必要性可能由许多原因引起：数据节点可能不可用，副本可能损坏，数据节点上的硬盘可能出现故障，或者文件的复制系数可能增加。
+
+
+
+The time-out to mark DataNodes dead is conservatively long (over 10 minutes by default) in order to avoid replication storm caused by state flapping of DataNodes. Users can set shorter interval to mark DataNodes as stale and avoid stale nodes on reading and/or writing by configuration for performance sensitive workloads.
+Cluster Rebalancing
+标记DataNodes dead的超时时间保守地很长（默认超过10分钟），以避免由DataNodes的状态抖动引起的复制风暴。对于性能敏感的工作负载，用户可以通过配置设置更短的时间间隔来将数据节点标记为过时，并避免在读取和/或写入时过时节点。
+
+
+The HDFS architecture is compatible with data rebalancing schemes. A scheme might automatically move data from one DataNode to another if the free space on a DataNode falls below a certain threshold. In the event of a sudden high demand for a particular file, a scheme might dynamically create additional replicas and rebalance other data in the cluster. These types of data rebalancing schemes are not yet implemented.
+HDFS体系结构与数据再平衡方案兼容。如果数据节点上的可用空间低于某个阈值，则方案可能会自动将数据从一个数据节点移动到另一个数据节点。在对特定文件的需求突然增加的情况下，方案可能会动态地创建额外的副本并重新平衡集群中的其他数据。这些类型的数据再平衡方案尚未实现。
+
+Data Integrity
+It is possible that a block of data fetched from a DataNode arrives corrupted. This corruption can occur because of faults in a storage device, network faults, or buggy software. The HDFS client software implements checksum checking on the contents of HDFS files. When a client creates an HDFS file, it computes a checksum of each block of the file and stores these checksums in a separate hidden file in the same HDFS namespace. When a client retrieves file contents it verifies that the data it received from each DataNode matches the checksum stored in the associated checksum file. If not, then the client can opt to retrieve that block from another DataNode that has a replica of that block.
+
+从DataNode获取的数据块可能已损坏。这种损坏可能是由于存储设备中的故障、网络故障或有缺陷的软件引起的。HDFS客户端软件对HDFS文件的内容执行校验和检查。当客户机创建HDFS文件时，它会计算文件的每个块的校验和，并将这些校验和存储在同一HDFS命名空间中的单独隐藏文件中。当客户机检索文件内容时，它将验证从每个DataNode接收到的数据是否与存储在相关校验和文件中的校验和相匹配。如果没有，那么客户机可以选择从另一个具有该块副本的DataNode检索该块。
+
+Metadata Disk Failure
+The FsImage and the EditLog are central data structures of HDFS. A corruption of these files can cause the HDFS instance to be non-functional. For this reason, the NameNode can be configured to support maintaining multiple copies of the FsImage and EditLog. Any update to either the FsImage or EditLog causes each of the FsImages and EditLogs to get updated synchronously. This synchronous updating of multiple copies of the FsImage and EditLog may degrade the rate of namespace transactions per second that a NameNode can support. However, this degradation is acceptable because even though HDFS applications are very data intensive in nature, they are not metadata intensive. When a NameNode restarts, it selects the latest consistent FsImage and EditLog to use.
+FsImage和EditLog是HDFS的中心数据结构。这些文件的损坏可能导致HDFS实例无法正常工作。因此，可以将NameNode配置为支持维护FsImage和EditLog的多个副本。对FsImage或EditLog的任何更新都会导致FsImages和EditLog同步更新。FsImage和EditLog的多个副本的同步更新可能会降低NameNode每秒可以支持的命名空间事务的速率。然而，这种降级是可以接受的，因为尽管HDFS应用程序本质上是数据密集型的，但它们不是元数据密集型的。当NameNode重新启动时，它将选择要使用的最新一致的FsImage和EditLog。
+
+
+Another option to increase resilience against failures is to enable High Availability using multiple NameNodes either with a shared storage on NFS or using a distributed edit log (called Journal). The latter is the recommended approach.
+Snapshots
+
+Snapshots support storing a copy of data at a particular instant of time. One usage of the snapshot feature may be to roll back a corrupted HDFS instance to a previously known good point in time.
+
+
+Data Blocks数据块
+HDFS is designed to support very large files. Applications that are compatible with HDFS are those that deal with large data sets. These applications write their data only once but they read it one or more times and require these reads to be satisfied at streaming speeds. HDFS supports write-once-read-many semantics on files. A typical block size used by HDFS is 128 MB. Thus, an HDFS file is chopped up into 128 MB chunks, and if possible, each chunk will reside on a different DataNode.
+HDFS被设计成支持非常大的文件。与HDFS兼容的应用程序是那些处理大数据集的应用程序。这些应用程序只写入一次数据，但它们会读取一次或多次，并要求以流式传输速度满足这些读取要求。HDFS支持文件的一次写入多次读取语义。HDFS使用的典型块大小是128mb。因此，一个HDFS文件被分割成128mb的块，如果可能的话，每个块将驻留在不同的DataNode上。
+
+Replication Pipelining复制流水线
+When a client is writing data to an HDFS file with a replication factor of three, the NameNode retrieves a list of DataNodes using a replication target choosing algorithm. This list contains the DataNodes that will host a replica of that block. The client then writes to the first DataNode. The first DataNode starts receiving the data in portions, writes each portion to its local repository and transfers that portion to the second DataNode in the list. The second DataNode, in turn starts receiving each portion of the data block, writes that portion to its repository and then flushes that portion to the third DataNode. Finally, the third DataNode writes the data to its local repository. Thus, a DataNode can be receiving data from the previous one in the pipeline and at the same time forwarding data to the next one in the pipeline. Thus, the data is pipelined from one DataNode to the next.
+当客户机将数据写入复制因子为3的HDFS文件时，NameNode使用复制目标选择算法检索数据节点列表。此列表包含将承载该块副本的DataNode。然后，客户机写入第一个DataNode。第一个DataNode开始分部分接收数据，将每个部分写入其本地存储库，并将该部分传输到列表中的第二个DataNode。第二个DataNode依次开始接收数据块的每个部分，将该部分写入其存储库，然后将该部分刷新到第三个DataNode。最后，第三个DataNode将数据写入其本地存储库。因此，数据节点可以从管道中的前一个节点接收数据，同时将数据转发给管道中的下一个节点。因此，数据通过管道从一个数据节点传输到下一个数据节点。
+
+
+Accessibility数据访问
+
+HDFS can be accessed from applications in many different ways. Natively, HDFS provides a FileSystem Java API for applications to use. A C language wrapper for this Java API and REST API is also available. In addition, an HTTP browser and can also be used to browse the files of an HDFS instance. By using NFS gateway, HDFS can be mounted as part of the client’s local file system.
+FS Shell
+
+HDFS allows user data to be organized in the form of files and directories. It provides a commandline interface called FS shell that lets a user interact with the data in HDFS. The syntax of this command set is similar to other shells (e.g. bash, csh) that users are already familiar with. Here are some sample action/command pairs:
+Action 	Command
+Create a directory named /foodir 	bin/hadoop dfs -mkdir /foodir
+Remove a directory named /foodir 	bin/hadoop fs -rm -R /foodir
+View the contents of a file named /foodir/myfile.txt 	bin/hadoop dfs -cat /foodir/myfile.txt
+
+FS shell is targeted for applications that need a scripting language to interact with the stored data.
+DFSAdmin
+
+The DFSAdmin command set is used for administering an HDFS cluster. These are commands that are used only by an HDFS administrator. Here are some sample action/command pairs:
+Action 	Command
+Put the cluster in Safemode 	bin/hdfs dfsadmin -safemode enter
+Generate a list of DataNodes 	bin/hdfs dfsadmin -report
+Recommission or decommission DataNode(s) 	bin/hdfs dfsadmin -refreshNodes
+Browser Interface
+
+A typical HDFS install configures a web server to expose the HDFS namespace through a configurable TCP port. This allows a user to navigate the HDFS namespace and view the contents of its files using a web browser.
+
+
+
+
+Space Reclamation
+File Deletes and Undeletes文件删除和撤消删除
+
+If trash configuration is enabled, files removed by FS Shell is not immediately removed from HDFS. Instead, HDFS moves it to a trash directory (each user has its own trash directory under /user/<username>/.Trash). The file can be restored quickly as long as it remains in trash.
+如果启用垃圾箱配置，则不会立即从HDFS中删除FS Shell删除的文件。相反，HDFS会将其移动到垃圾箱目录（每个用户在/user/<username>/.trash下都有自己的垃圾箱目录）。只要文件仍在垃圾桶中，就可以快速恢复。
+
+
+Most recent deleted files are moved to the current trash directory (/user/<username>/.Trash/Current), and in a configurable interval, HDFS creates checkpoints (under /user/<username>/.Trash/<date>) for files in current trash directory and deletes old checkpoints when they are expired. See expunge command of FS shell about checkpointing of trash.
+
+After the expiry of its life in trash, the NameNode deletes the file from the HDFS namespace. The deletion of a file causes the blocks associated with the file to be freed. Note that there could be an appreciable time delay between the time a file is deleted by a user and the time of the corresponding increase in free space in HDFS.
+
+Following is an example which will show how the files are deleted from HDFS by FS Shell. We created 2 files (test1 & test2) under the directory delete
+
+$ hadoop fs -mkdir -p delete/test1
+$ hadoop fs -mkdir -p delete/test2
+$ hadoop fs -ls delete/
+Found 2 items
+drwxr-xr-x   - hadoop hadoop          0 2015-05-08 12:39 delete/test1
+drwxr-xr-x   - hadoop hadoop          0 2015-05-08 12:40 delete/test2
+
+We are going to remove the file test1. The comment below shows that the file has been moved to Trash directory.
+
+$ hadoop fs -rm -r delete/test1
+Moved: hdfs://localhost:8020/user/hadoop/delete/test1 to trash at: hdfs://localhost:8020/user/hadoop/.Trash/Current
+
+now we are going to remove the file with skipTrash option, which will not send the file to Trash.It will be completely removed from HDFS.
+
+$ hadoop fs -rm -r -skipTrash delete/test2
+Deleted delete/test2
+
+We can see now that the Trash directory contains only file test1.
+
+$ hadoop fs -ls .Trash/Current/user/hadoop/delete/
+Found 1 items\
+drwxr-xr-x   - hadoop hadoop          0 2015-05-08 12:39 .Trash/Current/user/hadoop/delete/test1
+
+So file test1 goes to Trash and file test2 is deleted permanently.
+
+
+Decrease Replication Factor降低复本数
+
+When the replication factor of a file is reduced, the NameNode selects excess replicas that can be deleted. The next Heartbeat transfers this information to the DataNode. The DataNode then removes the corresponding blocks and the corresponding free space appears in the cluster. Once again, there might be a time delay between the completion of the setReplication API call and the appearance of free space in the cluster.
+当文件的复制因子减少时，NameNode选择可以删除的多余副本。下一个Heartbeat将此信息传输到DataNode。然后DataNode删除相应的块，相应的空闲空间将出现在集群中。同样，在setReplication API调用完成和集群中出现空闲空间之间可能存在一个时间延迟。
+
+
+＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝HDFS Users Guide＝＝＝＝＝＝＝＝＝＝＝＝＝＝
+
+    Purpose
+    Overview
+    Prerequisites
+    Web Interface
+    Shell Commands
+        DFSAdmin Command
+    Secondary NameNode
+    Checkpoint Node
+    Backup Node
+    Import Checkpoint
+    Balancer
+    Rack Awareness
+    Safemode
+    fsck
+    fetchdt
+    Recovery Mode
+    Upgrade and Rollback
+    DataNode Hot Swap Drive
+    File Permissions and Security
+    Scalability
+    Related Documentation
+
+Purpose
+
+This document is a starting point for users working with Hadoop Distributed File System (HDFS) either as a part of a Hadoop cluster or as a stand-alone general purpose distributed file system. While HDFS is designed to “just work” in many environments, a working knowledge of HDFS helps greatly with configuration improvements and diagnostics on a specific cluster.
+
+Overview
+
+HDFS is the primary distributed storage used by Hadoop applications. A HDFS cluster primarily consists of a NameNode that manages the file system metadata and DataNodes that store the actual data. The HDFS Architecture Guide describes HDFS in detail. This user guide primarily deals with the interaction of users and administrators with HDFS clusters. The HDFS architecture diagram depicts basic interactions among NameNode, the DataNodes, and the clients. Clients contact NameNode for file metadata or file modifications and perform actual file I/O directly with the DataNodes.
+
+The following are some of the salient features that could be of interest to many users.
+
+    Hadoop, including HDFS, is well suited for distributed storage and distributed processing using commodity hardware. It is fault tolerant, scalable, and extremely simple to expand. MapReduce, well known for its simplicity and applicability for large set of distributed applications, is an integral part of Hadoop.
+
+    HDFS is highly configurable with a default configuration well suited for many installations. Most of the time, configuration needs to be tuned only for very large clusters.
+
+    Hadoop is written in Java and is supported on all major platforms.
+
+    Hadoop supports shell-like commands to interact with HDFS directly.
+
+    The NameNode and Datanodes have built in web servers that makes it easy to check current status of the cluster.
+
+    New features and improvements are regularly implemented in HDFS. The following is a subset of useful features in HDFS:
+
+        File permissions and authentication.
+
+        Rack awareness: to take a node’s physical location into account while scheduling tasks and allocating storage.
+
+        Safemode: an administrative mode for maintenance.
+
+        fsck: a utility to diagnose health of the file system, to find missing files or blocks.
+
+        fetchdt: a utility to fetch DelegationToken and store it in a file on the local system.
+
+        Balancer: tool to balance the cluster when the data is unevenly distributed among DataNodes.
+
+        Upgrade and rollback: after a software upgrade, it is possible to rollback to HDFS’ state before the upgrade in case of unexpected problems.
+
+        Secondary NameNode: performs periodic checkpoints of the namespace and helps keep the size of file containing log of HDFS modifications within certain limits at the NameNode.
+
+        Checkpoint node: performs periodic checkpoints of the namespace and helps minimize the size of the log stored at the NameNode containing changes to the HDFS. Replaces the role previously filled by the Secondary NameNode, though is not yet battle hardened. The NameNode allows multiple Checkpoint nodes simultaneously, as long as there are no Backup nodes registered with the system.
+
+        Backup node: An extension to the Checkpoint node. In addition to checkpointing it also receives a stream of edits from the NameNode and maintains its own in-memory copy of the namespace, which is always in sync with the active NameNode namespace state. Only one Backup node may be registered with the NameNode at once.
+
+
+Secondary NameNode
+
+The NameNode stores modifications to the file system as a log appended to a native file system file, edits. When a NameNode starts up, it reads HDFS state from an image file, fsimage, and then applies edits from the edits log file. It then writes new HDFS state to the fsimage and starts normal operation with an empty edits file. Since NameNode merges fsimage and edits files only during start up, the edits log file could get very large over time on a busy cluster. Another side effect of a larger edits file is that next restart of NameNode takes longer.
+
+The secondary NameNode merges the fsimage and the edits log files periodically and keeps edits log size within a limit. It is usually run on a different machine than the primary NameNode since its memory requirements are on the same order as the primary NameNode.
+
+The start of the checkpoint process on the secondary NameNode is controlled by two configuration parameters.
+
+    dfs.namenode.checkpoint.period, set to 1 hour by default, specifies the maximum delay between two consecutive checkpoints, and
+
+    dfs.namenode.checkpoint.txns, set to 1 million by default, defines the number of uncheckpointed transactions on the NameNode which will force an urgent checkpoint, even if the checkpoint period has not been reached.
+
+The secondary NameNode stores the latest checkpoint in a directory which is structured the same way as the primary NameNode’s directory. So that the check pointed image is always ready to be read by the primary NameNode if necessary.
+
+For command usage, see secondarynamenode.
+NameNode将对文件系统的修改存储为附加到本机文件系统文件edits的日志。当NameNode启动时，它从图像文件fsimage读取HDFS状态，然后从编辑日志文件应用编辑。然后它将新的HDFS状态写入fsimage，并使用一个空的编辑文件开始正常操作。由于NameNode只在启动期间合并fsimage并编辑文件，因此在繁忙的集群上，编辑日志文件可能会随着时间的推移变得非常大。更大的编辑文件的另一个副作用是下次重新启动NameNode需要更长的时间。
+次要名称节点定期合并fsimage和编辑日志文件，并将编辑日志大小保持在限制范围内。它通常在与主NameNode不同的计算机上运行，因为它的内存需求与主NameNode的顺序相同。
+辅助NameNode上检查点进程的开始由两个配置参数控制。
+dfs.namenode.checkpoint.period（默认设置为1小时）指定两个连续检查点之间的最大延迟，以及
+dfs.namenode.checkpoint.txns（默认设置为100万）定义NameNode上未选中的事务数，该事务数将强制执行紧急检查点，即使尚未达到检查点期间。
+secondary NameNode将最新的检查点存储在与主NameNode目录结构相同的目录中。因此，如果需要，check-pointed映像总是可以由主NameNode读取。
+
+
+Safemode
+
+During start up the NameNode loads the file system state from the fsimage and the edits log file. It then waits for DataNodes to report their blocks so that it does not prematurely start replicating the blocks though enough replicas already exist in the cluster. During this time NameNode stays in Safemode. Safemode for the NameNode is essentially a read-only mode for the HDFS cluster, where it does not allow any modifications to file system or blocks. Normally the NameNode leaves Safemode automatically after the DataNodes have reported that most file system blocks are available. If required, HDFS could be placed in Safemode explicitly using bin/hdfs dfsadmin -safemode command. NameNode front page shows whether Safemode is on or off. A more detailed description and configuration is maintained as JavaDoc for setSafeMode().
+在启动期间，NameNode从fsimage和edits日志文件加载文件系统状态。然后等待数据节点报告它们的块，这样它就不会过早地开始复制块，尽管集群中已经存在足够多的副本。在此期间，NameNode将保持在安全模式。NameNode的Safemode本质上是HDFS集群的只读模式，不允许对文件系统或块进行任何修改。通常，在DataNodes报告大多数文件系统块可用后，NameNode会自动离开Safemode。如果需要，可以使用bin/HDFS dfsadmin-Safemode命令显式地将HDFS置于Safemode。NameNode首页显示安全模式是打开还是关闭。更详细的描述和配置以JavaDoc for setSafeMode（）维护。
+
+
+HDFS High Availability Using the Quorum Journal Manager
+
+Architecture
+
+In a typical HA cluster, two or more separate machines are configured as NameNodes. At any point in time, exactly one of the NameNodes is in an Active state, and the others are in a Standby state. The Active NameNode is responsible for all client operations in the cluster, while the Standbys are simply acting as workers, maintaining enough state to provide a fast failover if necessary.
+
+In order for the Standby node to keep its state synchronized with the Active node, both nodes communicate with a group of separate daemons called “JournalNodes” (JNs). When any namespace modification is performed by the Active node, it durably logs a record of the modification to a majority of these JNs. The Standby node is capable of reading the edits from the JNs, and is constantly watching them for changes to the edit log. As the Standby Node sees the edits, it applies them to its own namespace. In the event of a failover, the Standby will ensure that it has read all of the edits from the JournalNodes before promoting itself to the Active state. This ensures that the namespace state is fully synchronized before a failover occurs.
+
+In order to provide a fast failover, it is also necessary that the Standby node have up-to-date information regarding the location of blocks in the cluster. In order to achieve this, the DataNodes are configured with the location of all NameNodes, and send block location information and heartbeats to all.
+
+It is vital for the correct operation of an HA cluster that only one of the NameNodes be Active at a time. Otherwise, the namespace state would quickly diverge between the two, risking data loss or other incorrect results. In order to ensure this property and prevent the so-called “split-brain scenario,” the JournalNodes will only ever allow a single NameNode to be a writer at a time. During a failover, the NameNode which is to become active will simply take over the role of writing to the JournalNodes, which will effectively prevent the other NameNode from continuing in the Active state, allowing the new Active to safely proceed with failover.
+在典型的HA集群中，两个或多个独立的机器被配置为NameNodes。在任何时间点上，NameNodes中正好有一个处于活动状态，而其他节点处于备用状态。活动NameNode负责集群中的所有客户机操作，而备用节点只是充当工作线程，维护足够的状态，以便在必要时提供快速故障转移。
+
+
+为了使备用节点保持其状态与活动节点同步，两个节点都与一组名为“JournalNodes”（JNs）的独立守护进程进行通信。当活动节点执行任何名称空间修改时，它会将修改的记录持久地记录到这些jn中的大多数。备用节点能够从JNs中读取编辑，并不断地监视它们是否对编辑日志进行更改。当备用节点看到编辑时，它将它们应用于自己的命名空间。在发生故障转移时，备用服务器将确保在将自己升级到活动状态之前，已从JournalNodes读取了所有编辑。这可以确保命名空间状态在发生故障转移之前完全同步。
+
+
+为了提供快速的故障转移，备用节点还必须具有关于集群中块位置的最新信息。为了实现这一点，DataNodes配置了所有nameNode的位置，并向所有节点发送块位置信息和心跳信号。
+
+
+对于HA集群的正确操作，一次只有一个namenode处于活动状态是至关重要的。否则，名称空间状态将在这两者之间迅速分化，有数据丢失或其他不正确结果的风险。为了确保这个属性并防止所谓的“分裂大脑场景”，JournalNodes每次只允许一个NameNode成为一个writer。在故障转移期间，要变为活动状态的NameNode将简单地接管写入JournalNodes的角色，这将有效地阻止另一个NameNode继续处于活动状态，从而允许新的active安全地继续进行故障转移。
+
+
+Hardware resources
+
+In order to deploy an HA cluster, you should prepare the following:
+
+    NameNode machines - the machines on which you run the Active and Standby NameNodes should have equivalent hardware to each other, and equivalent hardware to what would be used in a non-HA cluster.
+
+    JournalNode machines - the machines on which you run the JournalNodes. The JournalNode daemon is relatively lightweight, so these daemons may reasonably be collocated on machines with other Hadoop daemons, for example NameNodes, the JobTracker, or the YARN ResourceManager. Note: There must be at least 3 JournalNode daemons, since edit log modifications must be written to a majority of JNs. This will allow the system to tolerate the failure of a single machine. You may also run more than 3 JournalNodes, but in order to actually increase the number of failures the system can tolerate, you should run an odd number of JNs, (i.e. 3, 5, 7, etc.). Note that when running with N JournalNodes, the system can tolerate at most (N - 1) / 2 failures and continue to function normally.
+
+Note that, in an HA cluster, the Standby NameNodes also performs checkpoints of the namespace state, and thus it is not necessary to run a Secondary NameNode, CheckpointNode, or BackupNode in an HA cluster. In fact, to do so would be an error. This also allows one who is reconfiguring a non-HA-enabled HDFS cluster to be HA-enabled to reuse the hardware which they had previously dedicated to the Secondary NameNode.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
