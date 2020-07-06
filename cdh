@@ -16,7 +16,8 @@ cp -rf mysql-connector-java-5.1.31.jar /usr/share/java/mysql-connector-java.jar
 yum install cloudera-manager-daemons-6.2.1-1426065.el7.x86_64.rpm cloudera-manager-server-6.2.1-1426065.el7.x86_64.rpm cloudera-manager-server-db-2-6.2.1-1426065.el7.x86_64.rpm cloudera-manager-agent-6.2.1-1426065.el7.x86_64.rpm
 
 
-
+vi /etc/cloudera-scm-agent/config.ini
+配置Agent上的Server
 
 
 
