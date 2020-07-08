@@ -16,6 +16,17 @@ cp -rf mysql-connector-java-5.1.31.jar /usr/share/java/mysql-connector-java.jar
 yum install cloudera-manager-daemons-6.2.1-1426065.el7.x86_64.rpm cloudera-manager-server-6.2.1-1426065.el7.x86_64.rpm cloudera-manager-server-db-2-6.2.1-1426065.el7.x86_64.rpm cloudera-manager-agent-6.2.1-1426065.el7.x86_64.rpm
 
 
+
+NFS网关启动失败，需要开启rpcbind
+systemctl start rpcbind
+
+
+挂载hdfs到本地文件系统，依赖于NFS网关
+hadoop-fuse-dfs hdfs://hadoop02:8020 /tinnohdfs
+
+
+
+
 vi /etc/cloudera-scm-agent/config.ini
 配置Agent上的Server
 
