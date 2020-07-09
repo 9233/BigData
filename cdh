@@ -31,6 +31,17 @@ vi /etc/cloudera-scm-agent/config.ini
 配置Agent上的Server
 
 
+主机检测和优化：
+群集进程了多个时区。例如，hadoop02 上的 UTC+08:00 和 hadoop06 上的 UTC-05:00。
+
+Cloudera 建议将 /proc/sys/vm/swappiness 设置为最大值 10。当前设置为 60。使用 sysctl 命令在运行时更改该设置并编辑 /etc/sysctl.conf，以在重启后保存该设置。您可以继续进行安装，但 Cloudera Manager 可能会报告您的主机由于交换而运行状况不良。以下主机将受到影响：
+查看详细信息
+
+已启用透明大页面压缩，可能会导致重大性能问题。请运行“echo never > /sys/kernel/mm/transparent_hugepage/defrag”和“echo never > /sys/kernel/mm/transparent_hugepage/enabled”以禁用此设置，然后将同一命令添加到 /etc/rc.local 等初始化脚本中，以便在系统重启时予以设置。
+
+托管主机之间的 Java 版本不一致。存在不匹配的版本，这将导致失败。
+
+
 
 
 
