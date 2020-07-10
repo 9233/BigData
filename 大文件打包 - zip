@@ -1,0 +1,22 @@
+zip压缩带软连接，　大文件目录　平均分割成指定小目录
+
+zip -s 2g -ry alfresco-community.zip alfresco-community/
+
+执行之后回创建下面一系列文件：
+
+alfresco-community.zip
+alfresco-community.z01
+alfresco-community.z02
+alfresco-community.z03
+...
+
+
+
+
+
+解压
+# 将分卷文件合并成一个单独的文件
+zip -s 0 alfresco-community.zip --out alfresco-community2020.zip
+# 解压文件
+unzip alfresco-community2020.zip
+
